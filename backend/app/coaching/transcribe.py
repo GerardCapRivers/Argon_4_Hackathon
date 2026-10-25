@@ -71,8 +71,16 @@ def load_audio(path: Path | str, sr: int = 16_000) -> np.ndarray:
     return np.frombuffer(proc.stdout, dtype="<i2").astype(np.float32) / 32768.0
 
 
-def transcribe(audio: Path | str | np.ndarray, offset: float = 0.0) -> dict:
+def on_gpu() -> bool:
+    """Non-blocking: assumes CPU until the model has finished loading."""
+    return _loaded is not None and _loaded.model.device == "cuda"
+
+
+def transcribe(audio: Path | str | np.ndarray, offset: float = 0.0, live: bool = False) -> dict:
     """Transcribe a media file or 16 kHz mono float32 samples.
+
+    live=True turns off temperature-fallback retries: on noisy or filler-heavy audio they
+    re-decode up to 6 times (slow) and tend to hallucinate repeated words.
 
     Returns {"text", "words": [{word,start,end,prob}], "avg_logprob", "duration"}.
     """
@@ -81,6 +89,7 @@ def transcribe(audio: Path | str | np.ndarray, offset: float = 0.0) -> dict:
         segments, info = _model().transcribe(
             src, word_timestamps=True, vad_filter=True, language="en", beam_size=1,
             initial_prompt=FILLER_PROMPT,
+            **({"temperature": 0.0, "condition_on_previous_text": False} if live else {}),
         )
         segments = list(segments)
     words, logprobs = [], []

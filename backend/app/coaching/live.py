@@ -17,10 +17,13 @@ import numpy as np
 
 from . import gemma_coach
 from .metrics import RollingMetrics, rule_nudges
+from .transcribe import on_gpu as transcriber_on_gpu
 from .transcribe import transcribe
 
 SAMPLE_RATE = 16_000
-CHUNK_SECONDS = 3.0
+# Whisper "small" keeps up with 3s pieces on GPU; on CPU it needs 6s pieces (~0.66x realtime).
+CHUNK_SECONDS_GPU = 3.0
+CHUNK_SECONDS_CPU = 6.0
 GEMMA_EVERY = 6.0  # seconds between Gemma calls
 SCORE_EVERY = 3.0  # seconds between saved Delivery Score points
 TICK_EVERY = 1.0  # evaluate rule nudges from live signals this often, independent of transcription
@@ -47,7 +50,8 @@ class LiveSession:
     # ------------------------------------------------------------- inputs
     async def on_audio(self, data: bytes) -> None:
         self.pcm.extend(data)
-        if len(self.pcm) >= CHUNK_SECONDS * SAMPLE_RATE * 2 and not self.transcribing and not self.closing:
+        chunk_s = CHUNK_SECONDS_GPU if transcriber_on_gpu() else CHUNK_SECONDS_CPU
+        if len(self.pcm) >= chunk_s * SAMPLE_RATE * 2 and not self.transcribing and not self.closing:
             chunk, start = bytes(self.pcm), self.audio_t
             self.pcm.clear()
             self.audio_t += len(chunk) / 2 / SAMPLE_RATE
@@ -71,7 +75,7 @@ class LiveSession:
         self.transcribing = True
         try:
             samples = np.frombuffer(chunk, dtype="<i2").astype(np.float32) / 32768.0
-            result = await asyncio.to_thread(transcribe, samples, start)
+            result = await asyncio.to_thread(transcribe, samples, start, True)
         finally:
             self.transcribing = False
         end = start + len(chunk) / 2 / SAMPLE_RATE

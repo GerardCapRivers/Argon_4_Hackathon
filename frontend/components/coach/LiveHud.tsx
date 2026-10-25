@@ -65,7 +65,7 @@ function Meter({
 }
 
 export function LiveHud({ m }: { m: HudMetrics | null }) {
-  const hasSpeech = (m?.words ?? 0) >= 12;
+  const hasSpeech = (m?.words ?? 0) >= 6;
   const wpm = hasSpeech ? m!.wpm : null;
   const eye = m?.eye_contact_recent ?? m?.eye_contact ?? null;
   const clarity = hasSpeech ? m!.clarity : null;
@@ -112,7 +112,7 @@ type Row = { label: string; value: number | null; display: string; min: number; 
 
 /** Compact one-line-per-metric list for the single-screen live view. */
 export function LiveMeterList({ m }: { m: HudMetrics | null }) {
-  const hasSpeech = (m?.words ?? 0) >= 12;
+  const hasSpeech = (m?.words ?? 0) >= 6;
   const wpm = hasSpeech ? m!.wpm : null;
   const eye = m?.eye_contact_recent ?? m?.eye_contact ?? null;
   const clarity = hasSpeech ? m!.clarity : null;

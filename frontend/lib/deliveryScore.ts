@@ -14,7 +14,7 @@ export function dimensionScores(m: HudMetrics): Partial<Record<keyof typeof WEIG
   const out: Partial<Record<keyof typeof WEIGHTS, number>> = {};
   const eye = m.eye_contact_recent ?? m.eye_contact;
   if (eye != null) out.eye = clamp01(eye / 0.8); // 80%+ of the time on the lens is full marks
-  const speech = (m.words ?? 0) >= 12;
+  const speech = (m.words ?? 0) >= 6;
   if (speech && m.wpm) {
     // Full marks in the 130-160 wpm band, falling to 0 at 80 and 220.
     out.pace = m.wpm < 130 ? clamp01((m.wpm - 80) / 50) : m.wpm > 160 ? clamp01((220 - m.wpm) / 60) : 1;

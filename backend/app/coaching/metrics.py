@@ -15,7 +15,7 @@ PACE_FAST, PACE_SLOW = 170, 110  # words per minute
 EYE_CONTACT_MIN = 0.6
 EYE_RECENT_SECONDS = 4.0  # short window so looking away is flagged within seconds
 CLARITY_MIN = 0.5
-MIN_WORDS = 12  # speech-based nudges need this many words in the window to be trustworthy
+MIN_WORDS = 6  # speech-based nudges need this many words in the window to be trustworthy
 WINDOW_SECONDS = 20.0
 
 

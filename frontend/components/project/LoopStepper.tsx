@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import type { Iteration } from "@/lib/api";
 
+const VISIBLE_STEPS = 4;
+
 export type LoopEvent = { name: string; data: Record<string, unknown>; at: number };
 
 type StageState = "done" | "active" | "pending" | "failed";
@@ -88,8 +90,14 @@ export function LoopStepper({ events, iterations, running }: { events: LoopEvent
     return () => clearInterval(t);
   }, [running]);
 
-  const stages = buildStages(events, iterations, running);
-  if (!stages.length) return null;
+  const all = buildStages(events, iterations, running);
+  if (!all.length) return null;
+  // Show only the two most recent versions (make + score each = 4 steps) so nodes never squeeze.
+  // Start the window on a "make" step so a version and its score always stay together.
+  let from = Math.max(0, all.length - VISIBLE_STEPS);
+  while (from > 0 && !all[from].key.startsWith("gen")) from -= 1;
+  const stages = all.slice(from);
+  const hidden = from;
   const t0 = stages.find((s) => s.start)?.start;
   const tEnd = running ? now : Math.max(...stages.map((s) => s.end ?? 0));
   const total = t0 && tEnd - t0 >= 1000 ? Math.round((tEnd - t0) / 1000) : null;
@@ -102,7 +110,10 @@ export function LoopStepper({ events, iterations, running }: { events: LoopEvent
   return (
     <section aria-label="Self-correcting loop">
       <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="font-mono text-xs text-muted">◆ draft → critique → revise → score</h2>
+        <h2 className="flex items-center gap-2 font-mono text-xs text-muted">
+          ◆ draft → critique → revise → score
+          {hidden > 0 && <span className="badge" title={`${hidden} earlier steps hidden`}>+{hidden / 2 >= 1 ? Math.floor(hidden / 2) : hidden} earlier version{Math.floor(hidden / 2) === 1 ? "" : "s"}</span>}
+        </h2>
         {total != null && <span className="font-mono text-sm tabular-nums text-muted">{Math.floor(total / 60)}:{String(total % 60).padStart(2, "0")}</span>}
       </div>
       <ol className="relative grid gap-3 sm:grid-flow-col sm:auto-cols-fr sm:gap-0">
