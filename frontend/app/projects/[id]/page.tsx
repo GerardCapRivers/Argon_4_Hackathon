@@ -6,12 +6,15 @@ import { CriticVerdict } from "@/components/project/CriticVerdict";
 import { CritiqueList } from "@/components/project/CritiqueList";
 import { EditTimeline } from "@/components/project/EditTimeline";
 import { ArgonChat } from "@/components/project/ArgonChat";
+import { GeneratingCard } from "@/components/project/GeneratingCard";
+import { StyleReferences } from "@/components/project/StyleReferences";
+import { TitleCardEditor } from "@/components/project/TitleCardEditor";
 import { LoopEvent, LoopStepper } from "@/components/project/LoopStepper";
 import { Score } from "@/components/Score";
 import { Spinner } from "@/components/Spinner";
 import { API, api, Critique, fmtTime, Iteration, postJSON, Project } from "@/lib/api";
 
-const EVENT_NAMES = ["analyzing", "moments", "generating", "rendered", "render_error", "critiquing", "critique", "done", "loop_error"];
+const EVENT_NAMES = ["analyzing", "moments", "generating", "rendering", "rendered", "render_error", "critiquing", "critique", "done", "loop_error"];
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -66,6 +69,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const analyzingStep = [...events].reverse().find((e) => e.name === "analyzing")?.data.step as string | undefined;
   const v1 = iterations.find((i) => i.version === 1);
   const latest = iterations[iterations.length - 1];
+  // A version is being made and hasn't rendered yet: show the animated placeholder on the left.
+  const lastGen = [...loopEvents].reverse().find((e) => e.name === "generating");
+  const generatingNew = project.status === "rendering" &&
+    !(lastGen && iterations.some((i) => i.version === Number(lastGen.data.version)));
+
   // Two versions side by side: the user's pick, or the latest two.
   const picked = (compare ?? iterations.slice(-2).map((i) => i.version))
     .map((v) => iterations.find((i) => i.version === v))
@@ -80,12 +88,35 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     else setCompare([...cur.slice(-1), v]);
   }
 
+  async function reanalyze() {
+    setError("");
+    try {
+      setEvents([]);
+      await postJSON(`/api/projects/${id}/analyze`, {});
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    refresh();
+  }
+
   async function run() {
     setError("");
     try {
       await postJSON(`/api/projects/${id}/select`, { selected: [...selected] });
       setEvents([]); // the server starts a fresh event log for a new run
       await postJSON(`/api/projects/${id}/run`, {});
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    refresh();
+  }
+
+  async function regenerate(version: number) {
+    setError("");
+    try {
+      await postJSON(`/api/projects/${id}/regenerate`, { version });
+      setCompare(null);
+      document.getElementById("versions")?.scrollIntoView({ behavior: "smooth" });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -137,6 +168,16 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </div>
       )}
 
+      {project.status === "error" && project.moments.length === 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-bad/30 bg-bad/5 px-5 py-4 text-sm">
+          <div>
+            <p className="font-medium">Analysis didn&apos;t finish.</p>
+            <p className="mt-0.5 text-muted">{(() => { const err = [...events].reverse().find((e) => e.name === "loop_error")?.data.error; return err ? String(err).slice(0, 160) : "The upload to Gemini was interrupted."; })()}</p>
+          </div>
+          <button className="btn-mono-dark" onClick={reanalyze}>Retry analysis <span className="arrow-ne">↗</span></button>
+        </div>
+      )}
+
       {project.status === "error" && project.moments.length > 0 && iterations.length > 0 && (
         <div className="flex items-center justify-between gap-4 rounded-xl border border-bad/30 bg-bad/5 px-4 py-3 text-sm">
           <span>The last run didn&apos;t finish. Running again replaces the versions below.</span>
@@ -151,6 +192,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       {(loopEvents.length > 0 || iterations.length > 0) && (
         <div className="grid items-start gap-8 lg:grid-cols-2">
           <div className="min-w-0 space-y-12">
+            <StyleReferences projectId={id} references={project.references ?? []} notes={project.style_notes ?? ""}
+              disabled={busy} onChanged={refresh} />
             <div className="rounded-2xl border border-line bg-panel">
               <div className="flex items-center gap-1.5 border-b border-line px-4 py-2.5">
                 <span className="h-2.5 w-2.5 rounded-full bg-line" /><span className="h-2.5 w-2.5 rounded-full bg-line" /><span className="h-2.5 w-2.5 rounded-full bg-line" />
@@ -161,7 +204,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               </div>
             </div>
 
-            {pair.length > 0 && (
+            {(pair.length > 0 || generatingNew) && (
               <section id="versions" className="scroll-mt-28 space-y-5" aria-label="Compare versions">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
@@ -183,8 +226,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   )}
                 </div>
                 <div className="grid gap-10">
-                  {pair.map((it) => (
-                    <VersionCard key={it.version} it={it} previousScore={it.version > 1 ? iterations.find((i) => i.version === it.version - 1)?.score : null} />
+                  {generatingNew && (
+                    <GeneratingCard events={loopEvents} format={project.format} fallbackVersion={(latest?.version ?? 0) + 1} />
+                  )}
+                  {(generatingNew ? pair.slice(-1) : pair).map((it) => (
+                    <VersionCard key={it.version} it={it} running={busy} onRegenerate={regenerate} projectId={id} onChanged={refresh}
+                      previousScore={it.version > 1 ? iterations.find((i) => i.version === it.version - 1)?.score : null} />
                   ))}
                 </div>
               </section>
@@ -233,6 +280,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               events={loopEvents}
               running={project.status === "rendering"}
               onSend={sendFeedback}
+              onRegenerate={regenerate}
+              referenceCount={(project.references?.length ?? 0) + (project.style_notes ? 1 : 0)}
               onCompare={(v) => {
                 setCompare(v > 1 ? [v - 1, v] : [v]);
                 document.getElementById("versions")?.scrollIntoView({ behavior: "smooth" });
@@ -245,7 +294,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   );
 }
 
-function VersionCard({ it, previousScore }: { it: Iteration; previousScore?: number | null }) {
+function VersionCard({ it, previousScore, running, onRegenerate, projectId, onChanged }: {
+  it: Iteration;
+  projectId: string;
+  onChanged: () => void;
+  previousScore?: number | null;
+  running: boolean;
+  onRegenerate: (version: number) => void;
+}) {
   const crit = it.critique as Critique;
   const label = it.trigger === "draft" ? "First draft" : it.trigger === "critique" ? "After critique" : "After your feedback";
   return (
@@ -254,9 +310,22 @@ function VersionCard({ it, previousScore }: { it: Iteration; previousScore?: num
         <h3 className="font-semibold">
           v{it.version} <span className="font-normal text-muted">· {label}</span>
         </h3>
-        {it.duration != null && <span className="font-mono text-xs tabular-nums text-muted">{it.duration.toFixed(1)}s</span>}
+        <span className="flex items-center gap-3">
+          {it.duration != null && <span className="font-mono text-xs tabular-nums text-muted">{it.duration.toFixed(1)}s</span>}
+          {it.score != null && (
+            <button onClick={() => onRegenerate(it.version)} disabled={running}
+              title="Make a new version that fixes what the critic flagged"
+              className="font-mono text-xs uppercase tracking-[0.08em] hover:underline disabled:opacity-40 disabled:no-underline">
+              ↻ Regenerate
+            </button>
+          )}
+          <a href={`${API}${it.url}?download=1`} className="font-mono text-xs uppercase tracking-[0.08em] hover:underline">Download MP4 <span className="arrow-ne">↗</span></a>
+        </span>
       </div>
-      <video key={it.url} src={`${API}${it.url}`} controls className="mx-auto max-h-[520px] w-full rounded-xl bg-black" />
+      {/* Title text in the URL busts the browser cache after the title card is re-applied. */}
+      <video key={`${it.url}-${it.title_card?.title ?? ""}`} src={`${API}${it.url}?tc=${encodeURIComponent(`${it.title_card?.title ?? ""}|${it.title_card?.subtitle ?? ""}`)}`}
+        controls className="mx-auto max-h-[520px] w-full rounded-xl bg-black" />
+      <TitleCardEditor projectId={projectId} version={it.version} card={it.title_card} disabled={running} onSaved={onChanged} />
       {crit?.score != null ? (
         <>
           <CriticVerdict critique={crit} previousScore={previousScore} />

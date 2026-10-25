@@ -47,7 +47,13 @@ Rules:
 - Every segment (cuts, title cards, lavfi color/anullsrc inputs) MUST end its video filter chain with `setsar=1,format=yuv420p,fps=30` and use `-ar 48000 -ac 2`, or the concat filter will fail on mismatched parameters.
 - To fill a different aspect ratio, crop to center (e.g. vertical from 16:9: `crop=ih*9/16:ih,scale=1080:1920`) or blur-pad.
 - Join segments with the concat FILTER (e.g. `-i seg1.mp4 -i seg2.mp4 -filter_complex "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]" -map "[v]" -map "[a]"`), not the concat demuxer.
-- Text overlays: `drawtext=fontfile={FONT_NAME}:text='...':fontsize=64:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=20:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,2.5)'`. Escape `:` inside text as `\\:` and avoid apostrophes.
+- There are exactly two kinds of on-screen text and they must never look alike:
+  1. SECTION HEADLINES (added text, not spoken): top-left green label, ALL CAPS, max 5 words, shown ~3s at the start of each section:
+     `drawtext=fontfile={FONT_NAME}:text='THE PROBLEM':fontsize=h*0.042:fontcolor=0x0A0A0A:box=1:boxcolor=0x22C55E@0.95:boxborderw=16:x=w*0.05:y=h*0.06:enable='between(t,0,3)'`
+  2. SUBTITLES (the speaker's exact words): bottom-centre, white text with a black outline, NO box, sentence case, max ~7 words per line, timed to the speech:
+     `drawtext=fontfile={FONT_NAME}:text='Founders rehearse alone,':fontsize=h*0.05:fontcolor=white:borderw=4:bordercolor=black:x=(w-text_w)/2:y=h*0.84:enable='between(t,0.0,1.6)'`
+  Never put headlines at the bottom or subtitles at the top, and never give subtitles a coloured box. Escape `:` inside text as `\\:` and avoid apostrophes.
+- The app automatically adds a ~2s opening TITLE CARD and a FADE TO BLACK at the end. Do NOT make your own opening title card, black intro or fade-out; start directly on the footage. Suggest the title card text in `title_card`.
 - Open with the strongest hook within the first 2 seconds. Cut filler and dead air. Keep every cut on a sentence boundary.
 Also return:
 - rationale: one item per edit decision, max 12 words each.
@@ -61,6 +67,12 @@ GENERATOR_SCHEMA = {
         "rationale": {"type": "array", "items": {"type": "string", "maxLength": 90}},
         "change_summary": {"type": "string", "maxLength": 90},
         "changes": {"type": "array", "items": {"type": "string", "maxLength": 70}, "minItems": 2, "maxItems": 5},
+        "title_card": {
+            "type": "object",
+            "description": "Opening title card text: a short headline for the pitch and a subtitle (e.g. company · round)",
+            "properties": {"title": {"type": "string", "maxLength": 48}, "subtitle": {"type": "string", "maxLength": 60}},
+            "required": ["title", "subtitle"],
+        },
     },
     "required": ["script", "rationale", "change_summary", "changes"],
 }
@@ -71,6 +83,8 @@ Watch the rendered video and judge it ONLY against the creator's goal, audience,
 Check: hook in first 2s, clarity of the problem/solution/ask, pacing, filler/dead air,
 cut quality (mid-word cuts, jump cuts), caption legibility and sync, framing for the aspect ratio,
 audio continuity, and length. Give specific, actionable fixes with timestamps in the rendered video.
+The ~2s opening title card and the final fade to black are added on purpose by the app: do not
+penalise them, and judge "hook in the first 2s" from the first frame of real footage after the title card.
 Score 0-10 where 10 means ready to publish for this goal. Be calibrated: a rough first cut is 4-6.
 Write for a busy founder scanning a dashboard. Be terse:
 - verdict: a headline of max 8 words (e.g. "Not publishable: captions overflow the frame").
@@ -119,5 +133,5 @@ def brief(goal: str, audience: str, style: str, fmt: dict, max_seconds: int) -> 
 def generator_rules(fmt: dict, max_seconds: int) -> str:
     return (
         GENERATOR_SYSTEM.replace("WIDTHxHEIGHT", f"{fmt['width']}x{fmt['height']}")
-        .replace("MAX_SECONDS", str(max_seconds))
+        .replace("MAX_SECONDS", str(max(max_seconds - 3, 5)))  # leave room for the title card
     )

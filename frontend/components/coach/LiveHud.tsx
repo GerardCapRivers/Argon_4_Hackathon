@@ -107,3 +107,53 @@ export function LiveHud({ m }: { m: HudMetrics | null }) {
     </div>
   );
 }
+
+type Row = { label: string; value: number | null; display: string; min: number; max: number; band: [number, number]; status: Status };
+
+/** Compact one-line-per-metric list for the single-screen live view. */
+export function LiveMeterList({ m }: { m: HudMetrics | null }) {
+  const hasSpeech = (m?.words ?? 0) >= 12;
+  const wpm = hasSpeech ? m!.wpm : null;
+  const eye = m?.eye_contact_recent ?? m?.eye_contact ?? null;
+  const clarity = hasSpeech ? m!.clarity : null;
+  const tone = hasSpeech ? m!.pitch_variation : null;
+  const fillers = m ? m.fillers : null;
+  const rows: Row[] = [
+    { label: "Pace", value: wpm, display: wpm == null ? "—" : `${wpm.toFixed(0)} wpm`, min: 80, max: 220, band: [130, 160],
+      status: wpm == null ? IDLE : wpm > 170 ? { word: "Too fast", tone: "warn" } : wpm < 110 ? { word: "Too slow", tone: "warn" } : { word: "On pace", tone: "good" } },
+    { label: "Eye contact", value: eye == null ? null : eye * 100, display: eye == null ? "—" : `${Math.round(eye * 100)}%`, min: 0, max: 100, band: [60, 100],
+      status: eye == null ? { word: "No face", tone: "idle" } : eye >= 0.6 ? { word: "Locked in", tone: "good" } : { word: "Look up", tone: "warn" } },
+    { label: "Fillers · 20s", value: fillers, display: fillers == null ? "—" : String(fillers), min: 0, max: 6, band: [0, 1],
+      status: fillers == null ? IDLE : fillers <= 1 ? { word: "Clean", tone: "good" } : { word: fillers >= 3 ? "Pause instead" : "Watch it", tone: "warn" } },
+    { label: "Clarity", value: clarity == null ? null : clarity * 100, display: clarity == null ? "—" : `${Math.round(clarity * 100)}%`, min: 30, max: 100, band: [75, 100],
+      status: clarity == null ? IDLE : clarity >= 0.75 ? { word: "Crisp", tone: "good" } : { word: "Enunciate", tone: "warn" } },
+    { label: "Tone", value: tone, display: tone == null ? "—" : tone >= 0.12 ? "Dynamic" : tone >= 0.07 ? "Flat" : "Monotone", min: 0, max: 0.25, band: [0.12, 0.25],
+      status: tone == null ? IDLE : tone >= 0.12 ? { word: "Engaging", tone: "good" } : { word: "Vary pitch", tone: "warn" } },
+  ];
+  const pct = (r: Row, v: number) => `${((Math.min(Math.max(v, r.min), r.max) - r.min) / (r.max - r.min)) * 100}%`;
+  return (
+    <ul className="divide-y divide-line">
+      {rows.map((r) => {
+        const chip = r.status.tone === "good" ? "bg-good/15 text-good" : r.status.tone === "warn" ? "bg-warn/15 text-warn" : "bg-panel-2 text-muted";
+        return (
+          <li key={r.label} className="py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-muted">{r.label}</span>
+              <span className="flex items-center gap-2">
+                <span className="font-mono text-sm font-semibold tabular-nums">{r.display}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${chip}`}>{r.status.word}</span>
+              </span>
+            </div>
+            <div className="relative mt-1.5 h-1.5 rounded-full bg-panel-2" aria-hidden>
+              <div className="absolute inset-y-0 rounded-full bg-good/25" style={{ left: pct(r, r.band[0]), width: `calc(${pct(r, r.band[1])} - ${pct(r, r.band[0])})` }} />
+              {r.value != null && (
+                <div className={`absolute top-1/2 h-3 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full transition-[left] duration-500 ${r.status.tone === "warn" ? "bg-warn" : "bg-text"}`}
+                  style={{ left: pct(r, r.value) }} />
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}

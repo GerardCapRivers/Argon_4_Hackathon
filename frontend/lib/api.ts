@@ -14,12 +14,14 @@ export type Critique = {
   issues: CritiqueIssue[];
 };
 
+export type Reference = { index: number; name: string; kind: "document" | "image" | "audio" | "video"; size: number };
+
 export type Segment = { start: number; end: number; title: string };
 
 export type Iteration = {
   id: number;
   version: number;
-  trigger: "draft" | "critique" | "human";
+  trigger: "draft" | "critique" | "human" | "regen";
   script: string;
   rationale: string[];
   change_summary: string;
@@ -30,6 +32,7 @@ export type Iteration = {
   critique: Critique | Record<string, never>;
   score: number | null;
   feedback?: string;
+  title_card?: { title?: string; subtitle?: string } | null;
   created_at?: string;
   url: string;
 };
@@ -45,6 +48,9 @@ export type Project = {
   moments: Moment[];
   selected_moments: number[];
   source_duration: number | null;
+  references?: Reference[];
+  style_notes?: string;
+  title_card?: { title?: string; subtitle?: string };
   iterations: Iteration[];
 };
 

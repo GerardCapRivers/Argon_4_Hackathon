@@ -119,3 +119,80 @@ def test_report_status_without_recording_is_not_pending():
         assert c.post(f"/api/coach/{cid}/report").status_code == 400
         listed = {s["id"]: s for s in c.get("/api/coach").json()}
         assert listed[cid]["report_status"] == "no_recording"
+
+
+def test_regenerate_uses_critique_and_history(monkeypatch):
+    from fastapi.testclient import TestClient
+    from sqlmodel import Session, select
+    from app.argon import editor, loop
+    from app.db import Iteration, Project, engine
+    from app.main import app
+
+    seen = {}
+
+    def fake_revise(project, moments, prev_script, feedback, render_error="", history=None):
+        seen["feedback"], seen["history"], seen["prev"] = feedback, history, prev_script
+        return {"script": "ffmpeg -i source.mp4 output.mp4", "changes": ["Fixed clipped words"], "rationale": []}
+
+    monkeypatch.setattr(editor, "revise_script", fake_revise)
+    monkeypatch.setattr(loop, "_render_with_repair", lambda project, version, gen, moments, emit: (gen, __import__("pathlib").Path("x.mp4")))
+    monkeypatch.setattr(loop, "probe_duration", lambda p: 20.0)
+
+    def fake_score(session, project, it, video, emit):
+        it.critique, it.score = {"score": 7.5, "issues": []}, 7.5
+        session.add(it); session.commit()
+
+    monkeypatch.setattr(loop, "_critique_and_score", fake_score)
+
+    with TestClient(app) as c:
+        with Session(engine) as s:
+            p = Project(title="regen", goal="g", status="done", moments=[{"start": 0, "end": 1, "label": "a", "why": "", "score": 1}])
+            s.add(p); s.commit(); s.refresh(p)
+            s.add(Iteration(project_id=p.id, version=1, trigger="draft", script="v1", critique={"score": 5, "issues": [{"at": "0:01", "problem": "clipped", "fix": "pad", "severity": "high"}]}, score=5))
+            s.add(Iteration(project_id=p.id, version=2, trigger="human", script="v2", feedback="bigger captions", changes=["Captions 72px"]))
+            s.commit()
+            pid = p.id
+        assert c.post(f"/api/projects/{pid}/regenerate", json={"version": 2}).status_code == 400  # v2 not reviewed
+        r = c.post(f"/api/projects/{pid}/regenerate", json={"version": 1})
+        assert r.status_code == 200 and r.json()["base"] == 1
+        import time
+        for _ in range(50):
+            if c.get(f"/api/projects/{pid}").json()["status"] == "done":
+                break
+            time.sleep(0.1)
+        with Session(engine) as s:
+            new = s.exec(select(Iteration).where(Iteration.project_id == pid, Iteration.version == 3)).first()
+        assert new.trigger == "regen" and "v1" in new.feedback and new.score == 7.5
+        assert seen["prev"] == "v1" and seen["feedback"]["issues"][0]["problem"] == "clipped"
+        assert seen["history"] == [{"version": 2, "feedback": "bigger captions", "changes": ["Captions 72px"]}]
+
+
+def test_title_card_edit_refinishes_video(tmp_path):
+    """Editing the title re-applies the title card + fade with real ffmpeg, no Argon call."""
+    import subprocess
+    from fastapi.testclient import TestClient
+    from sqlmodel import Session
+    from app.db import Iteration, Project, engine
+    from app.main import app
+    from app.render.local_runner import find_ffmpeg, probe_duration
+
+    job = tmp_path / "v1"
+    job.mkdir()
+    subprocess.run([find_ffmpeg(), "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30",
+                    "-f", "lavfi", "-i", "sine=frequency=300", "-t", "3", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-c:a", "aac", "-shortest", str(job / "output.mp4")], check=True)
+    with TestClient(app) as c:
+        with Session(engine) as s:
+            p = Project(title="t", goal="g", status="done", format="landscape")
+            s.add(p); s.commit(); s.refresh(p)
+            s.add(Iteration(project_id=p.id, version=1, script="x", video_path=str(job / "output.mp4")))
+            s.commit()
+            pid = p.id
+        assert c.put(f"/api/projects/{pid}/title", json={"title": "  "}).status_code == 400
+        r = c.put(f"/api/projects/{pid}/title", json={"title": "Raising: $1.5M 'seed'", "subtitle": "Kayla · 2026", "version": 1})
+        assert r.status_code == 200, r.text
+        d = c.get(f"/api/projects/{pid}").json()
+        it = d["iterations"][0]
+        assert it["title_card"] == {"title": "Raising: $1.5M 'seed'", "subtitle": "Kayla · 2026"}
+        assert d["title_card"]["title"].startswith("Raising")
+        assert (job / "final.mp4").exists() and probe_duration(job / "final.mp4") > 4.5  # 3s + 2.2s title card

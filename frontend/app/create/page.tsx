@@ -16,6 +16,7 @@ export default function CreatePage() {
   const [format, setFormat] = useState("short");
   const [footage, setFootage] = useState<File | null>(null);
   const [refs, setRefs] = useState<File[]>([]);
+  const [styleNotes, setStyleNotes] = useState("");
   const [voiceNote, setVoiceNote] = useState<File | null>(null);
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -61,6 +62,7 @@ export default function CreatePage() {
     fd.set("audience", audience);
     fd.set("style", style);
     fd.set("format", format);
+    fd.set("style_notes", styleNotes);
     fd.set("footage", footage);
     [...refs, ...(voiceNote ? [voiceNote] : [])].forEach((f) => fd.append("references", f));
     try {
@@ -108,11 +110,31 @@ export default function CreatePage() {
               <input id="style" className="input" placeholder="Energetic, bold captions, fast cuts" value={style} onChange={(e) => setStyle(e.target.value)} />
             </div>
           </div>
+          <div>
+            <span className="label">Style references (optional)</span>
+            <label htmlFor="refs" className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-line px-4 py-5 text-center transition hover:border-muted">
+              <span className="text-sm font-medium">Add a brand guide, logo, colour palette or example video</span>
+              <span className="mt-1 font-mono text-xs text-muted">pdf · png/jpg · txt/md · mp4 · mp3 — Argon&apos;s editor and critic both follow these</span>
+              <input id="refs" type="file" multiple className="sr-only"
+                accept=".pdf,.txt,.md,image/*,audio/*,video/*"
+                onChange={(e) => setRefs((r) => [...r, ...Array.from(e.target.files ?? [])])} />
+            </label>
+            {refs.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {refs.map((f, i) => (
+                  <span key={`${f.name}-${i}`} className="badge text-text">
+                    {f.name}
+                    <button type="button" aria-label={`Remove ${f.name}`} className="text-muted hover:text-bad" onClick={() => setRefs((r) => r.filter((_, j) => j !== i))}>✕</button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <label className="label" htmlFor="refs">Reference images / audio (optional)</label>
-              <input id="refs" type="file" multiple accept="image/*,audio/*,video/*" className="input file:mr-3 file:rounded-full file:border-0 file:bg-panel-2 file:px-3 file:py-1 file:text-xs"
-                onChange={(e) => setRefs(Array.from(e.target.files ?? []))} />
+              <label className="label" htmlFor="style-notes">Style notes (optional)</label>
+              <textarea id="style-notes" className="input min-h-20" value={styleNotes} onChange={(e) => setStyleNotes(e.target.value)}
+                placeholder="e.g. Brand green #22C55E, clean sans-serif, calm and confident tone" />
             </div>
             <div>
               <span className="label">Or describe it out loud (optional)</span>

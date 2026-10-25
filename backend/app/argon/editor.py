@@ -6,7 +6,9 @@ from typing import Any
 
 from ..config import FORMATS, settings
 from . import prompts
-from .client import file_part, generate_json
+from pathlib import Path
+
+from .client import cached_upload, file_part, generate_json
 
 
 def _fmt(project) -> dict:
@@ -15,6 +17,28 @@ def _fmt(project) -> dict:
 
 def _brief(project) -> str:
     return prompts.brief(project.goal, project.audience, project.style, _fmt(project), settings.max_video_seconds)
+
+
+def style_parts(project) -> list[Any]:
+    """Style references (brand guide PDF, logo, palette, example videos) + typed notes, for every step."""
+    paths = [Path(p) for p in (getattr(project, "reference_paths", None) or []) if Path(p).exists()]
+    notes = (getattr(project, "style_notes", "") or "").strip()
+    if not paths and not notes:
+        return []
+    parts: list[Any] = ["STYLE REFERENCES (follow these for colours, fonts, tone and caption style; "
+                        "they take priority over default styling):"]
+    for p in paths:
+        try:
+            uri, mime = cached_upload(p)
+            parts.append(file_part(uri, mime))
+        except Exception:
+            continue  # a reference that fails to upload shouldn't block the edit
+    if notes:
+        parts.append("STYLE NOTES from the presenter: " + notes)
+    if any(p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") for p in paths):
+        parts.append("A logo/brand image from the references is available as logo.png in the job folder "
+                     "(e.g. overlay with `-i logo.png -filter_complex \"[1:v]scale=-1:h*0.08[l];[0:v][l]overlay=W-w-40:40\"`).")
+    return parts
 
 
 def _reference_parts(reference_uris: list[dict]) -> list[Any]:
@@ -26,6 +50,7 @@ def find_key_moments(project, reference_uris: list[dict] | None = None) -> list[
     contents = [
         file_part(project.source_file_uri),
         *_reference_parts(reference_uris or []),
+        *style_parts(project),
         _brief(project)
         + "\n\nList 4-8 candidate moments (each 3-12s) that together could make the final video.",
     ]
@@ -50,6 +75,7 @@ def generate_script(project, moments: list[dict]) -> dict:
     contents = [
         file_part(project.source_file_uri),
         _brief(project),
+        *style_parts(project),
         "SELECTED MOMENTS (source time, seconds):\n" + json.dumps(moments, indent=1),
         "WORD TIMINGS (word@start):\n" + _transcript_excerpt(project.transcript, moments),
         "Write the first-draft edit script.",
@@ -84,6 +110,7 @@ def revise_script(
     contents = [
         file_part(project.source_file_uri),
         _brief(project),
+        *style_parts(project),
         "SELECTED MOMENTS (source time, seconds):\n" + json.dumps(moments, indent=1),
         "WORD TIMINGS (word@start):\n" + _transcript_excerpt(project.transcript, moments),
         "PREVIOUS SCRIPT:\n" + prev_script,
@@ -112,7 +139,9 @@ def critique(project, rendered_uri: str) -> dict:
     contents = [
         file_part(rendered_uri),
         _brief(project),
-        "Critique this rendered video against the brief.",
+        *style_parts(project),
+        "Critique this rendered video against the brief"
+        + (" and the style references (flag off-brand colours, fonts or tone)." if style_parts(project) else "."),
     ]
     return generate_json("critique", prompts.CRITIC_SYSTEM, contents, prompts.CRITIC_SCHEMA)
 

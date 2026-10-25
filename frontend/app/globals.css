@@ -155,3 +155,17 @@ h1, h2, h3 { text-wrap: balance; }
   .nudge-glow { animation: none; box-shadow: inset 0 0 0 4px var(--warn); }
   .nudge-drain { animation: none; }
 }
+
+/* Generating placeholder: light sweep across the skeleton + indeterminate progress bar. */
+@keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.skeleton-shimmer::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgb(255 255 255 / 0.65) 50%, transparent 80%);
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+@keyframes indeterminate { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+.progress-indeterminate { width: 40%; animation: indeterminate 1.3s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer::after { animation: none; opacity: 0; }
+  .progress-indeterminate { animation: none; width: 50%; margin-left: 0; }
+}

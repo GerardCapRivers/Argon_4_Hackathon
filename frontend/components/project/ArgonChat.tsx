@@ -10,10 +10,12 @@ type Msg =
   | { kind: "user"; key: string; text: string; at?: string; pending?: boolean }
   | { kind: "argon"; key: string; it: Iteration; title: string; previousScore?: number | null }
   | { kind: "working"; key: string; version: number; step: string }
-  | { kind: "error"; key: string; text: string; retry?: string };
+  | { kind: "error"; key: string; text: string; retry?: string }
+  | { kind: "system"; key: string; text: string };
 
 const STEP: Record<string, string> = {
   generating: "Writing the edit code",
+  rendering: "Rendering the video",
   rendered: "Rendered, sending to the critic",
   render_error: "Render failed, repairing the script",
   critiquing: "Critic is watching",
@@ -21,13 +23,15 @@ const STEP: Record<string, string> = {
 
 /** Chat-style history of every version, plus a composer that sends feedback for the next one. */
 export function ArgonChat({
-  iterations, events, running, onSend, onCompare,
+  iterations, events, running, onSend, onCompare, onRegenerate, referenceCount = 0,
 }: {
   iterations: Iteration[];
   events: LoopEvent[];
   running: boolean;
   onSend: (text: string) => Promise<boolean>;
   onCompare: (version: number) => void;
+  onRegenerate: (version: number) => void;
+  referenceCount?: number;
 }) {
   const [text, setText] = useState("");
   const [pending, setPending] = useState<{ text: string; version: number } | null>(null);
@@ -44,19 +48,27 @@ export function ArgonChat({
     const out: Msg[] = [];
     for (const it of iterations) {
       const prev = iterations.find((i) => i.version === it.version - 1);
+      if (it.trigger === "regen") {
+        out.push({ kind: "system", key: `s${it.version}`, text: `↻ ${it.feedback || "Regenerated from the critic's notes"}` });
+      }
       if (it.trigger === "human" && it.feedback) {
         out.push({ kind: "user", key: `u${it.version}`, text: it.feedback, at: it.created_at });
       }
       const title = it.trigger === "draft" ? `Draft v${it.version} is ready.`
+        : it.trigger === "regen" ? `I fixed what the critic flagged. Here's v${it.version}.`
         : it.trigger === "critique" ? `I fixed what the critic flagged. Here's v${it.version}.`
           : `Done. Here's v${it.version}.`;
       out.push({ kind: "argon", key: `a${it.version}`, it, title, previousScore: prev?.score });
     }
     // Live progress for the version being worked on.
-    const live = [...events].reverse().find((e) => ["generating", "rendered", "render_error", "critiquing", "loop_error", "done"].includes(e.name));
+    const live = [...events].reverse().find((e) => ["generating", "rendering", "rendered", "render_error", "critiquing", "loop_error", "done"].includes(e.name));
     const failed = events.filter((e) => e.name === "loop_error");
     const lastFail = failed[failed.length - 1];
     if (pending) out.push({ kind: "user", key: "pending", text: pending.text, pending: true });
+    const liveGen = [...events].reverse().find((e) => e.name === "generating");
+    if (running && liveGen?.data.trigger === "regen" && !iterations.some((i) => i.version === Number(liveGen.data.version))) {
+      out.push({ kind: "system", key: "sregen", text: `↻ ${String(liveGen.data.request ?? "Regenerating from the critic's notes")}` });
+    }
     if (running && live && live.name !== "loop_error" && live.name !== "done") {
       const v = Number(live.data.version) || nextVersion;
       const done = iterations.find((i) => i.version === v);
@@ -110,6 +122,12 @@ export function ArgonChat({
                 </div>
               </div>
             );
+          if (m.kind === "system")
+            return (
+              <div key={m.key} className="flex justify-center">
+                <span className="rounded-full border border-line bg-panel px-3 py-1 font-mono text-[11px] text-muted">{m.text}</span>
+              </div>
+            );
           if (m.kind === "working")
             return (
               <ArgonBubble key={m.key}>
@@ -140,7 +158,7 @@ export function ArgonChat({
                   ))}
                 </ul>
               )}
-              <video src={`${API}${m.it.url}`} controls preload="metadata" className="mt-3 max-h-80 w-full rounded-xl bg-[#0a0a0a]" />
+              <video src={`${API}${m.it.url}?tc=${encodeURIComponent(`${m.it.title_card?.title ?? ""}|${m.it.title_card?.subtitle ?? ""}`)}`} controls preload="metadata" className="mt-3 max-h-80 w-full rounded-xl bg-[#0a0a0a]" />
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {m.it.score != null ? (
                   <span className="badge text-text">{m.it.score.toFixed(1)}/10</span>
@@ -151,7 +169,15 @@ export function ArgonChat({
                   <span className={`badge ${delta > 0 ? "text-good" : "text-bad"}`}>{delta > 0 ? "▲ +" : "▼ "}{delta.toFixed(1)}</span>
                 )}
                 {c?.verdict && <span className="text-xs text-muted">{c.verdict}</span>}
-                <button className="ml-auto text-xs font-medium hover:underline" onClick={() => onCompare(m.it.version)}>Compare ↗</button>
+                <span className="ml-auto flex items-center gap-3">
+                  {m.it.score != null && (
+                    <button className="text-xs font-medium hover:underline disabled:opacity-40 disabled:no-underline" disabled={running}
+                      onClick={() => onRegenerate(m.it.version)} title="Make a new version that fixes what the critic flagged">
+                      ↻ Regenerate
+                    </button>
+                  )}
+                  <button className="text-xs font-medium hover:underline" onClick={() => onCompare(m.it.version)}>Compare ↗</button>
+                </span>
               </div>
             </ArgonBubble>
           );
@@ -186,7 +212,10 @@ export function ArgonChat({
             )}
           </button>
         </form>
-        <p className="px-1 font-mono text-[10.5px] text-muted">Enter to send · Shift+Enter for a new line · renders v{nextVersion}</p>
+        <p className="px-1 font-mono text-[10.5px] text-muted">
+          Enter to send · Shift+Enter for a new line · renders v{nextVersion}
+          {referenceCount > 0 && <> · follows {referenceCount} style reference{referenceCount === 1 ? "" : "s"}</>}
+        </p>
       </div>
     </section>
   );

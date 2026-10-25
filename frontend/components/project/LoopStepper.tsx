@@ -20,7 +20,8 @@ type Stage = {
 const genLabel = (v: number, trigger?: string) =>
   v === 1 ? { label: "Draft", caption: "Argon writes the edit code" }
     : trigger === "human" ? { label: `Your edit · v${v}`, caption: "Applying your feedback" }
-      : { label: `Revise · v${v}`, caption: "Argon fixes its code" };
+      : trigger === "regen" ? { label: `Regenerate · v${v}`, caption: "Fixing the critic's notes" }
+        : { label: `Revise · v${v}`, caption: "Argon fixes its code" };
 const critLabel = (v: number) =>
   v === 1 ? { label: "Critique", caption: "Critic watches v1" } : { label: `Score · v${v}`, caption: `Critic scores v${v}` };
 
@@ -43,7 +44,7 @@ function buildStages(events: LoopEvent[], iterations: Iteration[], running: bool
     const v = Number(e.data.version);
     if (e.name === "generating") {
       const it = iterations.find((i) => i.version === v);
-      start({ key: `gen${v}`, ...genLabel(v, it?.trigger ?? (v > 2 ? "human" : undefined)), state: "active", start: e.at });
+      start({ key: `gen${v}`, ...genLabel(v, it?.trigger ?? (e.data.trigger as string | undefined) ?? (v > 2 ? "human" : undefined)), state: "active", start: e.at });
     } else if (e.name === "render_error") {
       const s = find(`gen${v}`);
       if (s) s.repaired = true;

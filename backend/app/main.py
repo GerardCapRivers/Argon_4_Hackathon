@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import re
 import shutil
 import subprocess
 import threading
@@ -29,6 +30,7 @@ from .coaching.transcribe import _model as transcribe_model
 from .coaching.transcribe import transcribe
 from .config import FORMATS, settings
 from .db import CoachSession, Iteration, Project, engine, get_session, init_db
+from .render.finish import finish
 from .render.local_runner import find_ffmpeg, probe_duration
 
 ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
@@ -65,7 +67,9 @@ app.add_middleware(
 def _save_upload(f: UploadFile, folder: Path) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     suffix = Path(f.filename or "").suffix.lower() or mimetypes.guess_extension(f.content_type or "") or ".bin"
-    dest = folder / f"{uuid.uuid4().hex[:10]}{suffix}"
+    # Keep a readable version of the original name (shown in the UI), prefixed so names never collide.
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(f.filename or "file").stem)[:40] or "file"
+    dest = folder / f"{uuid.uuid4().hex[:8]}__{stem}{suffix}"
     with dest.open("wb") as out:
         shutil.copyfileobj(f.file, out)
     return dest
@@ -105,6 +109,7 @@ def create_project(
     format: str = Form("short"),
     footage: UploadFile = File(...),
     references: list[UploadFile] = File(default=[]),
+    style_notes: str = Form(""),
     session: Session = Depends(get_session),
 ):
     if format not in FORMATS:
@@ -116,6 +121,7 @@ def create_project(
     folder = settings.uploads_dir / f"p{project.id}"
     project.source_path = str(_save_upload(footage, folder))
     project.reference_paths = [str(_save_upload(r, folder / "refs")) for r in references if r.filename]
+    project.style_notes = style_notes.strip()[:2000]
     session.add(project)
     session.commit()
     _thread(_analyze, project.id)
@@ -134,11 +140,11 @@ def _analyze(project_id: int) -> None:
             emit("analyzing", {"step": "uploading"})
             p.source_file_uri = upload(Path(p.source_path)).uri
             refs = []
-            for r in p.reference_paths:
+            for r in []:  # references now flow through editor.style_parts for every step
                 f = upload(Path(r))
                 refs.append({"uri": f.uri, "mime_type": f.mime_type})
             emit("analyzing", {"step": "finding key moments"})
-            p.moments = editor.find_key_moments(p, refs)
+            p.moments = editor.find_key_moments(p, refs)  # style_parts included inside
             p.selected_moments = list(range(len(p.moments)))
             p.status = "moments"
             emit("moments", {"moments": p.moments})
@@ -147,6 +153,22 @@ def _analyze(project_id: int) -> None:
             emit("loop_error", {"error": str(e)})
         session.add(p)
         session.commit()
+
+
+@app.post("/api/projects/{pid}/analyze")
+def reanalyze(pid: int, session: Session = Depends(get_session)):
+    """Restart analysis (transcribe, upload, key moments), e.g. after a failed upload."""
+    p = session.get(Project, pid)
+    if not p:
+        raise HTTPException(404)
+    if p.status in ("analyzing", "rendering"):
+        raise HTTPException(409, "Already working on this project")
+    p.status = "analyzing"
+    session.add(p)
+    session.commit()
+    events.reset(pid)
+    _thread(_analyze, pid)
+    return {"ok": True}
 
 
 @app.get("/api/projects/{pid}")
@@ -160,12 +182,66 @@ def get_project(pid: int, session: Session = Depends(get_session)):
         session.add(p)
         session.commit()
     data = p.model_dump(exclude={"transcript", "source_path", "reference_paths"})
+    data["references"] = [_reference_info(i, r) for i, r in enumerate(p.reference_paths or []) if Path(r).exists()]
     data["iterations"] = [
         {**i.model_dump(exclude={"video_path"}), "url": f"/api/projects/{pid}/videos/{i.version}",
          "segments": edl.segments(i.script)}
         for i in its
     ]
     return data
+
+
+REFERENCE_EXTS = {".pdf", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp3", ".wav", ".m4a", ".mp4", ".mov", ".webm"}
+
+
+def _reference_info(i: int, path: str) -> dict:
+    p = Path(path)
+    name = p.name.split("__", 1)[-1]
+    ext = p.suffix.lower()
+    kind = ("document" if ext in (".pdf", ".txt", ".md") else "image" if ext in (".png", ".jpg", ".jpeg", ".webp", ".gif")
+            else "audio" if ext in (".mp3", ".wav", ".m4a") else "video")
+    return {"index": i, "name": name, "kind": kind, "size": p.stat().st_size}
+
+
+@app.post("/api/projects/{pid}/references")
+def add_references(pid: int, files: list[UploadFile] = File(...), session: Session = Depends(get_session)):
+    p = session.get(Project, pid)
+    if not p:
+        raise HTTPException(404)
+    bad = [f.filename for f in files if Path(f.filename or "").suffix.lower() not in REFERENCE_EXTS]
+    if bad:
+        raise HTTPException(400, f"Unsupported file type: {', '.join(bad)} (use PDF, text, images, audio or video)")
+    folder = settings.uploads_dir / f"p{pid}" / "refs"
+    p.reference_paths = [*(p.reference_paths or []), *(str(_save_upload(f, folder)) for f in files)]
+    session.add(p)
+    session.commit()
+    return {"references": [_reference_info(i, r) for i, r in enumerate(p.reference_paths)]}
+
+
+@app.delete("/api/projects/{pid}/references/{index}")
+def remove_reference(pid: int, index: int, session: Session = Depends(get_session)):
+    p = session.get(Project, pid)
+    if not p or not (0 <= index < len(p.reference_paths or [])):
+        raise HTTPException(404)
+    p.reference_paths = [r for i, r in enumerate(p.reference_paths) if i != index]
+    session.add(p)
+    session.commit()
+    return {"references": [_reference_info(i, r) for i, r in enumerate(p.reference_paths)]}
+
+
+class StyleNotes(BaseModel):
+    style_notes: str
+
+
+@app.put("/api/projects/{pid}/style-notes")
+def set_style_notes(pid: int, body: StyleNotes, session: Session = Depends(get_session)):
+    p = session.get(Project, pid)
+    if not p:
+        raise HTTPException(404)
+    p.style_notes = body.style_notes.strip()[:2000]
+    session.add(p)
+    session.commit()
+    return {"ok": True}
 
 
 class Selection(BaseModel):
@@ -221,6 +297,56 @@ def human_feedback(pid: int, body: Feedback, session: Session = Depends(get_sess
     return {"ok": True}
 
 
+class TitleCard(BaseModel):
+    title: str
+    subtitle: str = ""
+    version: int | None = None  # which version to re-finish now (default: latest)
+
+
+@app.put("/api/projects/{pid}/title")
+def set_title(pid: int, body: TitleCard, session: Session = Depends(get_session)):
+    """Save the opening title and re-apply it (title card + fade only, no Argon call)."""
+    p = session.get(Project, pid)
+    if not p:
+        raise HTTPException(404)
+    title, subtitle = body.title.strip()[:80], body.subtitle.strip()[:100]
+    if not title:
+        raise HTTPException(400, "Title can't be empty")
+    p.title_card = {"title": title, "subtitle": subtitle}
+    session.add(p)
+    q = select(Iteration).where(Iteration.project_id == pid)
+    it = session.exec(q.where(Iteration.version == body.version) if body.version else q.order_by(Iteration.version.desc())).first()
+    if it:
+        fmt = FORMATS.get(p.format, FORMATS["short"])
+        try:
+            out = finish(Path(it.video_path).parent, fmt["width"], fmt["height"], title, subtitle)
+        except Exception as e:
+            raise HTTPException(500, f"Couldn't apply the title: {e}")
+        it.video_path, it.title_card, it.duration = str(out), dict(p.title_card), probe_duration(out)
+        session.add(it)
+    session.commit()
+    return {"ok": True, "version": it.version if it else None}
+
+
+class Regenerate(BaseModel):
+    version: int | None = None
+
+
+@app.post("/api/projects/{pid}/regenerate")
+def regenerate(pid: int, body: Regenerate, session: Session = Depends(get_session)):
+    """New version that fixes what the critic flagged on `version` (default: the latest)."""
+    q = select(Iteration).where(Iteration.project_id == pid)
+    base = session.exec(
+        q.where(Iteration.version == body.version) if body.version else q.order_by(Iteration.version.desc())
+    ).first()
+    if not base:
+        raise HTTPException(404, "No such version")
+    if not (base.critique or {}).get("score") and not (base.critique or {}).get("issues"):
+        raise HTTPException(400, f"v{base.version} hasn't been reviewed by the critic yet")
+    _start_locked(pid, session, loop.run_regeneration, base.version)
+    return {"ok": True, "base": base.version}
+
+
 @app.get("/api/projects/{pid}/events")
 async def project_events(pid: int, request: Request, start: int = 0):
     # EventSource sends Last-Event-ID when it reconnects; resume there instead of replaying everything.
@@ -249,13 +375,32 @@ async def project_events(pid: int, request: Request, start: int = 0):
 
 
 @app.get("/api/projects/{pid}/videos/{version}")
-def get_video(pid: int, version: int, session: Session = Depends(get_session)):
+def get_video(pid: int, version: int, download: bool = False, session: Session = Depends(get_session)):
     it = session.exec(
         select(Iteration).where(Iteration.project_id == pid, Iteration.version == version)
     ).first()
     if not it or not Path(it.video_path).exists():
         raise HTTPException(404)
-    return FileResponse(it.video_path, media_type="video/mp4")
+    if download:
+        return FileResponse(it.video_path, media_type="video/mp4", filename=f"pitch_v{version}.mp4")
+    return FileResponse(_playable(Path(it.video_path)), media_type="video/mp4")
+
+
+def _playable(path: Path) -> Path:
+    """In-app preview with Opus audio (video copied, <1s).
+
+    MP4s carry AAC audio, which some embedded browsers (e.g. VS Code's) can't decode, so they
+    play silently. Opus plays everywhere. Downloads (?download=1) still get the AAC original.
+    """
+    preview = path.with_name(path.stem + ".preview.mp4")
+    if preview.exists() and preview.stat().st_mtime >= path.stat().st_mtime:
+        return preview
+    proc = subprocess.run(
+        [find_ffmpeg(), "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(path),
+         "-c:v", "copy", "-c:a", "libopus", "-b:a", "128k", "-movflags", "+faststart", str(preview)],
+        capture_output=True, stdin=subprocess.DEVNULL, timeout=120,
+    )
+    return preview if proc.returncode == 0 and preview.exists() else path
 
 
 @app.get("/api/projects/{pid}/source")

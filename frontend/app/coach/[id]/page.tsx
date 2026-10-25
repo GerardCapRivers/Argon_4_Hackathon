@@ -11,7 +11,7 @@ type Session = {
   id: number;
   title: string;
   created_at: string;
-  metrics: { duration?: number; avg_wpm?: number; total_fillers?: number; eye_contact?: number | null };
+  metrics: { duration?: number; avg_wpm?: number; total_fillers?: number; eye_contact?: number | null; finalized?: boolean };
   feedback_log: { type: string; t: number; message?: string; kind?: string; score?: number }[];
   report: CoachReport | Record<string, never>;
   has_recording: boolean;
@@ -33,7 +33,9 @@ export default function CoachReportPage({ params }: { params: Promise<{ id: stri
       try {
         const data = await api<Session>(`/api/coach/${id}`);
         setS(data);
-        if (data.report_status === "generating" && !stop) setTimeout(poll, 3000);
+        // Keep polling while the report is being written or the live log is still being saved.
+        const savingLog = !data.metrics.finalized && data.report_status !== "no_recording";
+        if ((data.report_status === "generating" || savingLog) && !stop) setTimeout(poll, 3000);
       } catch (e) {
         setError((e as Error).message);
       }
@@ -78,8 +80,8 @@ export default function CoachReportPage({ params }: { params: Promise<{ id: stri
           </div>
         </div>
         <div className="flex gap-2">
-          <Link href="/coach" className="btn-ghost">Rehearse again</Link>
-          <Link href="/create" className="btn-primary">Turn into a video →</Link>
+          <Link href="/coach" className="btn-mono">Rehearse again <span className="arrow-ne">↗</span></Link>
+          <Link href="/create" className="btn-mono-dark">Turn into a video <span className="arrow-ne">↗</span></Link>
         </div>
       </header>
 
@@ -163,7 +165,9 @@ export default function CoachReportPage({ params }: { params: Promise<{ id: stri
 
       <section className="card">
         <h2 className="mb-2 font-semibold">Live nudges you received</h2>
-        {nudges.length === 0 ? <p className="text-sm text-muted">None, nice.</p> : (
+        {!s.metrics.finalized && s.report_status !== "no_recording" ? (
+          <p className="flex items-center gap-2 text-sm text-muted"><Spinner /> Saving your live nudges…</p>
+        ) : nudges.length === 0 ? <p className="text-sm text-muted">None, nice.</p> : (
           <ul className="space-y-1 text-sm">
             {nudges.map((n, i) => <li key={i}><span className="font-mono text-xs text-muted">{n.t.toFixed(0)}s</span> {n.message}</li>)}
           </ul>

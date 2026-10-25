@@ -3,7 +3,7 @@
 import type { FaceLandmarker } from "@mediapipe/tasks-vision";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { HudMetrics, LiveHud } from "@/components/coach/LiveHud";
+import { HudMetrics, LiveMeterList } from "@/components/coach/LiveHud";
 import { LiveNudge, NUDGE_MS, NudgeStage } from "@/components/coach/NudgeStage";
 import { ScoreTrend } from "@/components/coach/ScoreTrend";
 import { Spinner } from "@/components/Spinner";
@@ -35,6 +35,8 @@ export default function CoachPage() {
     if (el && streamRef.current && el.srcObject !== streamRef.current) el.srcObject = streamRef.current;
   }, []);
   const stopRef = useRef<() => Promise<void>>(async () => {});
+  const pauseRef = useRef<() => void>(() => {});
+  const [paused, setPaused] = useState(false);
   // Stops everything a live session started; also run if the page unmounts mid-rehearsal.
   const teardownRef = useRef<() => void>(() => {});
   const mountedRef = useRef(true);
@@ -137,8 +139,13 @@ export default function CoachPage() {
     await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error("Coaching server unreachable")); });
 
     const t0 = performance.now();
-    const now = () => (performance.now() - t0) / 1000;
+    // Session clock excludes paused time, so pace and timestamps stay correct.
+    let paused = false;
+    let pausedAt = 0;
+    let pausedTotal = 0;
+    const now = () => (performance.now() - t0 - pausedTotal - (paused ? performance.now() - pausedAt : 0)) / 1000;
     let live = true;
+    setPaused(false);
 
     scoreRef.current = null;
     setScoreHistory([]);
@@ -173,6 +180,7 @@ export default function CoachPage() {
     let lastPitch: number | null = null;
     let lastLevelAt = 0;
     const stopAudio = await startAudio(stream, (f) => {
+      if (paused) return; // nothing is transcribed or coached while paused
       if (ws.readyState === WebSocket.OPEN) ws.send(f.pcm);
       lastRms = f.rms;
       lastPitch = f.pitch;
@@ -186,6 +194,7 @@ export default function CoachPage() {
     // Eye contact → backend every ~200 ms (never sends frames).
     let eyeVotes: boolean[] = [];
     sampleLoop((f) => {
+      if (paused) return;
       const looking = f ? modelRef.current.predict(f) : false;
       eyeVotes.push(looking);
       setEyeNow(looking);
@@ -198,6 +207,20 @@ export default function CoachPage() {
 
     const timer = setInterval(() => setElapsed(now()), 250);
     setPhase("live");
+
+    pauseRef.current = () => {
+      if (!paused) {
+        paused = true;
+        pausedAt = performance.now();
+        if (rec.state === "recording") rec.pause();
+        setActiveNudge(null);
+      } else {
+        pausedTotal += performance.now() - pausedAt;
+        paused = false;
+        if (rec.state === "paused") rec.resume();
+      }
+      setPaused(paused);
+    };
 
     let tornDown = false;
     teardownRef.current = () => {
@@ -212,6 +235,11 @@ export default function CoachPage() {
     };
 
     stopRef.current = async () => {
+      if (paused) {
+        paused = false;
+        if (rec.state === "paused") rec.resume();
+        setPaused(false);
+      }
       live = false;
       clearInterval(timer);
       stopAudio();
@@ -237,8 +265,15 @@ export default function CoachPage() {
   const best = scoreHistory.length ? Math.round(Math.max(...scoreHistory.map((p) => p.score))) : null;
 
   const stage = (
-    <div className="surface-dark relative overflow-hidden rounded-2xl border border-line">
-      <video ref={attachVideo} autoPlay muted playsInline className="aspect-video w-full -scale-x-100 object-cover" />
+    <div className={`surface-dark relative overflow-hidden rounded-2xl border border-line ${liveView ? "h-full min-h-[16rem]" : ""}`}>
+      <video ref={attachVideo} autoPlay muted playsInline
+        className={`${liveView ? "h-full" : "aspect-video"} w-full -scale-x-100 object-cover`} />
+      {liveView && paused && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/60 text-center backdrop-blur-sm">
+          <span className="display text-4xl text-white">Paused.</span>
+          <span className="text-sm text-white/70">Nothing is recorded or coached until you resume.</span>
+        </div>
+      )}
       {liveView && (
         <>
           <div className="absolute left-3 top-3 flex items-center gap-2">
@@ -280,52 +315,66 @@ export default function CoachPage() {
   );
 
   if (liveView) {
+    // One screen, no scrolling: a presenter can't scroll mid-pitch.
+    const recent = [...nudges].reverse().slice(0, 3);
+    const transcriptTail = transcript.length > 140 ? "…" + transcript.slice(-140).replace(/^\S*\s/, "") : transcript;
     return (
-      <div className="space-y-4">
-        {error && <p className="rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm text-bad">{error}</p>}
-        {stage}
+      <div className="grid gap-4 lg:h-[calc(100dvh-9rem)] lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="flex min-h-0 flex-col gap-3">
+          {error && <p className="rounded-lg border border-bad/40 bg-bad/10 p-3 text-sm text-bad">{error}</p>}
+          <div className="min-h-0 flex-1">{stage}</div>
+          {phase === "live" && (
+            <p className="min-h-5 text-sm leading-snug text-muted">{paused ? "Paused." : transcriptTail || "Start talking…"}</p>
+          )}
+        </div>
 
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
-          <section className="rounded-xl border border-line bg-panel px-4 py-3" aria-label="Delivery score">
+        <aside className="flex min-h-0 flex-col gap-3 overflow-hidden">
+          <section className="rounded-2xl border border-line bg-panel px-4 py-3" aria-label="Delivery score">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Delivery score</div>
-                <div className="mt-0.5 flex items-baseline gap-2">
-                  <span className="font-mono text-5xl font-semibold tabular-nums text-text">{score ?? "—"}</span>
+                <div className="eyebrow">Delivery score</div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="font-mono text-4xl font-semibold tabular-nums">{score ?? "—"}</span>
                   <span className="text-sm text-muted">/ 100</span>
                 </div>
               </div>
               <div className="text-right text-xs tabular-nums">
-                {delta != null && (
-                  <div className={delta >= 0 ? "text-good" : "text-warn"}>
-                    {delta >= 0 ? "▲ +" : "▼ "}{delta} since start
-                  </div>
-                )}
+                {delta != null && <div className={delta >= 0 ? "text-good" : "text-warn"}>{delta >= 0 ? "▲ +" : "▼ "}{delta} since start</div>}
                 {best != null && <div className="mt-0.5 text-muted">Best {best}</div>}
               </div>
             </div>
-            <div className="mt-4">
-              <ScoreTrend history={scoreHistory} />
-            </div>
+            <div className="mt-2"><ScoreTrend history={scoreHistory} height={48} /></div>
           </section>
-          <LiveHud m={metrics} />
-        </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-1" aria-label="Nudge history">
-            <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Nudges</span>
-            {nudges.length === 0 && <span className="text-sm text-muted">None yet</span>}
-            {[...nudges].reverse().map((n) => (
-              <span key={n.id} className="shrink-0 rounded-full border border-line bg-panel px-3 py-1 text-xs">
-                <span className="mr-1.5 font-mono tabular-nums text-muted">{n.t.toFixed(0)}s</span>{n.message}
-              </span>
-            ))}
+          <section className="rounded-2xl border border-line bg-panel px-4 py-1" aria-label="Live metrics">
+            <LiveMeterList m={metrics} />
+          </section>
+
+          <section className="min-h-0 flex-1 rounded-2xl border border-line bg-panel px-4 py-3" aria-label="Recent nudges">
+            <div className="eyebrow mb-2">Recent nudges</div>
+            {recent.length === 0 ? (
+              <p className="text-sm text-muted">None yet</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {recent.map((n, i) => (
+                  <li key={n.id} className={`flex gap-2 text-sm leading-snug ${i === 0 ? "font-medium" : "text-muted"}`}>
+                    <span className="w-8 shrink-0 font-mono text-xs tabular-nums text-muted">{n.t.toFixed(0)}s</span>{n.message}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
+            <button className="btn-mono px-4 py-3" onClick={() => pauseRef.current()} disabled={phase === "uploading"}
+              aria-pressed={paused} aria-label={paused ? "Resume rehearsal" : "Pause rehearsal"}>
+              {paused ? "▶ Resume" : "❚❚ Pause"}
+            </button>
+            <button className="btn-mono-dark py-3" onClick={() => stopRef.current()} disabled={phase === "uploading"}>
+              {phase === "uploading" ? <><Spinner /> Saving…</> : <>Finish &amp; get report <span className="arrow-ne">↗</span></>}
+            </button>
           </div>
-          <button className="btn-mono-dark px-6 py-3" onClick={() => stopRef.current()} disabled={phase === "uploading"}>
-            {phase === "uploading" ? <><Spinner /> Saving…</> : <>Finish &amp; get report <span className="arrow-ne">↗</span></>}
-          </button>
-        </div>
-        {phase === "live" && <p className="min-h-6 text-sm leading-relaxed text-muted">{transcript || "Start talking…"}</p>}
+        </aside>
       </div>
     );
   }

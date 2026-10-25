@@ -25,7 +25,7 @@ def _link_or_copy(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
-def prepare_workdir(project_id: int, version: int, source: Path, words: list[dict]) -> Path:
+def prepare_workdir(project_id: int, version: int, source: Path, words: list[dict], references: list[str] | None = None) -> Path:
     workdir = settings.jobs_dir / f"p{project_id}" / f"v{version}"
     workdir.mkdir(parents=True, exist_ok=True)
     _link_or_copy(source, workdir / SOURCE_NAME)
@@ -33,4 +33,7 @@ def prepare_workdir(project_id: int, version: int, source: Path, words: list[dic
     font = next((f for f in _FONT_CANDIDATES if f.exists()), None)
     if font:
         _link_or_copy(font, workdir / FONT_NAME)
+    logo = next((Path(r) for r in references or [] if Path(r).suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") and Path(r).exists()), None)
+    if logo:
+        shutil.copy2(logo, workdir / "logo.png" if logo.suffix.lower() == ".png" else workdir / f"logo{logo.suffix.lower()}")
     return workdir

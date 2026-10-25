@@ -24,11 +24,14 @@ class Project(SQLModel, table=True):
     status: str = "draft"  # draft | moments | rendering | done | error
     source_path: str = ""
     source_file_uri: str = ""  # Gemini Files API URI of the source footage
-    reference_paths: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    reference_paths: list[str] = Field(default_factory=list, sa_column=Column(JSON))  # style references
+    style_notes: str = ""  # typed style instructions (brand colours, tone, ...)
     transcript: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))
     moments: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))
     selected_moments: list[int] = Field(default_factory=list, sa_column=Column(JSON))
     source_duration: Optional[float] = None
+    # Opening title card. Empty = use Argon's suggestion for each version.
+    title_card: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -43,7 +46,8 @@ class Iteration(SQLModel, table=True):
     rationale: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     change_summary: str = ""
     changes: list[str] = Field(default_factory=list, sa_column=Column(JSON))
-    feedback: str = ""  # the presenter's chat message that produced this version (human revisions)
+    feedback: str = ""
+    title_card: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))  # what this version shows  # the presenter's chat message that produced this version (human revisions)
     duration: Optional[float] = None
     diff: str = ""
     video_path: str = ""
