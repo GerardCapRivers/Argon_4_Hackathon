@@ -1,0 +1,5 @@
+kaggle>=1.6
+mediapipe>=0.10.14
+numpy
+scikit-learn>=1.4
+pillow

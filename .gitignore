@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Env (real values live only in backend/.env; the template is backend/example.env)
+.env
+backend/.env
+backend/.env.example
+frontend/.env.local
+
+# Data (uploads, renders, scripts, db)
+data/
+*.db
+
+# Node
+node_modules/
+.next/

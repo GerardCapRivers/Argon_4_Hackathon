@@ -1,0 +1,181 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { SectionHeader } from "@/components/ui/SectionHeader";
+import { API, api, FormatPreset } from "@/lib/api";
+
+export default function CreatePage() {
+  const router = useRouter();
+  const [formats, setFormats] = useState<Record<string, FormatPreset>>({});
+  const [maxSeconds, setMaxSeconds] = useState(30);
+  const [title, setTitle] = useState("");
+  const [goal, setGoal] = useState("");
+  const [audience, setAudience] = useState("");
+  const [style, setStyle] = useState("");
+  const [format, setFormat] = useState("short");
+  const [footage, setFootage] = useState<File | null>(null);
+  const [refs, setRefs] = useState<File[]>([]);
+  const [voiceNote, setVoiceNote] = useState<File | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const recorder = useRef<MediaRecorder | null>(null);
+
+  useEffect(() => {
+    api<{ formats: Record<string, FormatPreset>; max_seconds: number }>("/api/formats")
+      .then((r) => {
+        setFormats(r.formats);
+        setMaxSeconds(r.max_seconds);
+      })
+      .catch((e) => setError(e.message));
+  }, []);
+
+  async function toggleVoiceNote() {
+    if (recording) {
+      recorder.current?.stop();
+      return;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const rec = new MediaRecorder(stream);
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => chunks.push(e.data);
+    rec.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      setVoiceNote(new File(chunks, "voice-note.webm", { type: rec.mimeType }));
+      setRecording(false);
+    };
+    rec.start();
+    recorder.current = rec;
+    setRecording(true);
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!footage || !goal.trim()) return;
+    setBusy(true);
+    setError("");
+    const fd = new FormData();
+    fd.set("title", title || footage.name.replace(/\.[^.]+$/, ""));
+    fd.set("goal", goal);
+    fd.set("audience", audience);
+    fd.set("style", style);
+    fd.set("format", format);
+    fd.set("footage", footage);
+    [...refs, ...(voiceNote ? [voiceNote] : [])].forEach((f) => fd.append("references", f));
+    try {
+      const res = await fetch(`${API}/api/projects`, { method: "POST", body: fd });
+      if (!res.ok) throw new Error((await res.json()).detail ?? res.statusText);
+      const { id } = await res.json();
+      router.push(`/projects/${id}`);
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="mx-auto max-w-4xl space-y-14">
+      <div className="rise">
+        <SectionHeader
+          size="h1"
+          eyebrow="Stage 2 · Gemini 4 Argon"
+          title="New pitch video."
+          lede={<>Tell Argon what the video must achieve. It finds key moments, writes the edit as code, renders it, critiques it against your goal and revises it once. Videos are capped at {maxSeconds}s for the demo.</>}
+        />
+      </div>
+
+      <ol className="divide-y divide-line border-y border-line">
+        <Step n="01" title="Goal." hint="What should a viewer do after watching?">
+          <div>
+            <label className="label" htmlFor="goal">Goal</label>
+            <textarea
+              id="goal"
+              className="input min-h-24"
+              placeholder="e.g. Get a seed investor to book a follow-up call: show the problem, our traction and the ask."
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              required
+            />
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="label" htmlFor="audience">Target audience</label>
+              <input id="audience" className="input" placeholder="Seed-stage VCs" value={audience} onChange={(e) => setAudience(e.target.value)} />
+            </div>
+            <div>
+              <label className="label" htmlFor="style">Style</label>
+              <input id="style" className="input" placeholder="Energetic, bold captions, fast cuts" value={style} onChange={(e) => setStyle(e.target.value)} />
+            </div>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="label" htmlFor="refs">Reference images / audio (optional)</label>
+              <input id="refs" type="file" multiple accept="image/*,audio/*,video/*" className="input file:mr-3 file:rounded-full file:border-0 file:bg-panel-2 file:px-3 file:py-1 file:text-xs"
+                onChange={(e) => setRefs(Array.from(e.target.files ?? []))} />
+            </div>
+            <div>
+              <span className="label">Or describe it out loud (optional)</span>
+              <button type="button" onClick={toggleVoiceNote} className={recording ? "btn-primary w-full" : "btn-ghost w-full"}>
+                {recording ? <><span className="dot-live" /> Stop recording</> : voiceNote ? "✓ Voice note recorded, re-record" : "● Record voice note"}
+              </button>
+            </div>
+          </div>
+        </Step>
+
+        <Step n="02" title="Format." hint="Where will the video be posted?">
+          <div className="grid gap-3 sm:grid-cols-3">
+            {Object.entries(formats).map(([key, f]) => {
+              const on = format === key;
+              return (
+                <button type="button" key={key} onClick={() => setFormat(key)} aria-pressed={on}
+                  className={`group rounded-2xl border p-4 text-left transition ${on ? "border-text bg-panel" : "border-line hover:border-muted"}`}>
+                  <div className="flex h-16 items-center">
+                    <div className={`rounded-[3px] border-2 transition-all duration-300 ${on ? "border-text bg-text/5" : "border-muted/60"}`}
+                      style={{ height: 52 * Math.min(1, f.height / f.width), width: 52 * Math.min(1, f.width / f.height) }} />
+                  </div>
+                  <div className="mt-3 text-sm font-medium">{f.label}</div>
+                  <div className="mt-0.5 font-mono text-xs text-muted">{f.width}×{f.height} · ≤{maxSeconds}s</div>
+                </button>
+              );
+            })}
+          </div>
+        </Step>
+
+        <Step n="03" title="Footage." hint="Your rehearsal recording. Shorter, compressed files upload faster.">
+          <label htmlFor="footage" className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-10 text-center transition ${footage ? "border-text bg-panel" : "border-line hover:border-muted"}`}>
+            <span className="text-sm font-medium">{footage ? footage.name : "Choose a video file"}</span>
+            <span className="mt-1 font-mono text-xs text-muted">{footage ? `${(footage.size / 1e6).toFixed(1)} MB` : "mp4 · mov · webm"}</span>
+            <input id="footage" type="file" accept="video/*" className="sr-only" onChange={(e) => setFootage(e.target.files?.[0] ?? null)} required />
+          </label>
+          <div>
+            <label className="label" htmlFor="title">Title (optional)</label>
+            <input id="title" className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Seed pitch v1" />
+          </div>
+        </Step>
+      </ol>
+
+      {error && <p className="rounded-xl border border-bad/40 bg-bad/5 p-4 text-sm text-bad">{error}</p>}
+
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <p className="text-sm text-muted">Argon reads the whole video, so analysis takes about a minute.</p>
+        <button className="btn-mono-dark px-6 py-3" disabled={busy || !footage || !goal.trim()}>
+          {busy ? "Uploading…" : <>Find key moments <span className="arrow-ne">↗</span></>}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function Step({ n, title, hint, children }: { n: string; title: string; hint: string; children: React.ReactNode }) {
+  return (
+    <li className="grid gap-6 py-10 md:grid-cols-[14rem_minmax(0,1fr)]">
+      <div>
+        <div className="font-mono text-sm text-muted">{n}</div>
+        <h2 className="mt-2 text-xl font-medium tracking-[-0.01em]">{title}</h2>
+        <p className="mt-1 text-sm text-muted">{hint}</p>
+      </div>
+      <div className="min-w-0 space-y-4">{children}</div>
+    </li>
+  );
+}
