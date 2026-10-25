@@ -81,7 +81,7 @@ export default function CoachReportPage({ params }: { params: Promise<{ id: stri
         </div>
         <div className="flex gap-2">
           <Link href="/coach" className="btn-mono">Rehearse again <span className="arrow-ne">↗</span></Link>
-          <Link href="/create" className="btn-mono-dark">Turn into a video <span className="arrow-ne">↗</span></Link>
+          <Link href={s.has_recording ? `/create?from=${s.id}` : "/create"} className="btn-mono-dark">Turn into a video <span className="arrow-ne">↗</span></Link>
         </div>
       </header>
 

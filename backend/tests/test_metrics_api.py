@@ -196,3 +196,42 @@ def test_title_card_edit_refinishes_video(tmp_path):
         assert it["title_card"] == {"title": "Raising: $1.5M 'seed'", "subtitle": "Kayla · 2026"}
         assert d["title_card"]["title"].startswith("Raising")
         assert (job / "final.mp4").exists() and probe_duration(job / "final.mp4") > 4.5  # 3s + 2.2s title card
+
+
+def test_create_project_from_rehearsal_recording(tmp_path, monkeypatch):
+    """A rehearsal's recording becomes the footage; WebM is converted to MP4 during analysis."""
+    import subprocess, time
+    from fastapi.testclient import TestClient
+    from sqlmodel import Session
+    from app import main
+    from app.db import CoachSession, engine
+    from app.render.local_runner import find_ffmpeg, probe_duration
+
+    rec = tmp_path / "rehearsal.webm"
+    subprocess.run([find_ffmpeg(), "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30",
+                    "-f", "lavfi", "-i", "sine=frequency=300", "-t", "2", "-c:v", "libvpx-vp9", "-deadline", "realtime",
+                    "-c:a", "libopus", "-shortest", str(rec)], check=True)
+    # Stop analysis after the conversion step (no Whisper/Gemini in tests).
+    monkeypatch.setattr(main, "transcribe", lambda path: (_ for _ in ()).throw(RuntimeError("stop after convert")))
+    with TestClient(main.app) as c:
+        with Session(engine) as s:
+            cs = CoachSession(title="Seed pitch rehearsal", recording_path=str(rec))
+            s.add(cs); s.commit(); s.refresh(cs)
+            cid = cs.id
+        assert c.get(f"/api/coach/{cid}/recording").status_code == 200
+        assert c.post("/api/projects", data={"goal": "g", "format": "landscape"}).status_code == 400  # no footage
+        r = c.post("/api/projects", data={"goal": "g", "format": "landscape", "title": "Seed pitch rehearsal", "from_session": str(cid)})
+        assert r.status_code == 200, r.text
+        pid = r.json()["id"]
+        for _ in range(100):
+            resp = c.get(f"/api/projects/{pid}")
+            assert resp.status_code == 200, resp.text
+            assert "status" in resp.json(), resp.json()
+            if resp.json()["status"] != "analyzing":
+                break
+            time.sleep(0.1)
+        with Session(engine) as s:
+            from app.db import Project
+            p = s.get(Project, pid)
+        assert p.source_path.endswith(".mp4") and probe_duration(p.source_path) > 1.5
+        assert p.title == "Seed pitch rehearsal"

@@ -107,19 +107,34 @@ def create_project(
     audience: str = Form(""),
     style: str = Form(""),
     format: str = Form("short"),
-    footage: UploadFile = File(...),
+    footage: UploadFile | None = File(None),
+    from_session: int | None = Form(None),  # use a live-coaching rehearsal's recording as the footage
     references: list[UploadFile] = File(default=[]),
     style_notes: str = Form(""),
     session: Session = Depends(get_session),
 ):
     if format not in FORMATS:
         raise HTTPException(400, f"format must be one of {list(FORMATS)}")
+    rehearsal = None
+    if from_session is not None:
+        rehearsal = session.get(CoachSession, from_session)
+        if not rehearsal or not rehearsal.recording_path or not Path(rehearsal.recording_path).exists():
+            raise HTTPException(400, "That rehearsal has no saved recording; attach a video file instead")
+    elif footage is None or not footage.filename:
+        raise HTTPException(400, "Attach a video file or pick a rehearsal")
     project = Project(title=title, goal=goal, audience=audience, style=style, format=format, status="analyzing")
     session.add(project)
     session.commit()
     session.refresh(project)
     folder = settings.uploads_dir / f"p{project.id}"
-    project.source_path = str(_save_upload(footage, folder))
+    if rehearsal:
+        folder.mkdir(parents=True, exist_ok=True)
+        src = Path(rehearsal.recording_path)
+        dest = folder / f"{uuid.uuid4().hex[:8]}__rehearsal_{from_session}{src.suffix}"
+        shutil.copy2(src, dest)
+        project.source_path = str(dest)
+    else:
+        project.source_path = str(_save_upload(footage, folder))
     project.reference_paths = [str(_save_upload(r, folder / "refs")) for r in references if r.filename]
     project.style_notes = style_notes.strip()[:2000]
     session.add(project)
@@ -128,12 +143,29 @@ def create_project(
     return {"id": project.id}
 
 
+def _to_mp4(path: Path) -> Path:
+    """Re-encode a browser recording (WebM/MOV) to H.264/AAC MP4 with a proper duration header."""
+    out = path.with_suffix(".mp4")
+    proc = subprocess.run(
+        [find_ffmpeg(), "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(path),
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-r", "30",
+         "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-movflags", "+faststart", str(out)],
+        capture_output=True, stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace", timeout=900,
+    )
+    if proc.returncode != 0 or not out.exists():
+        raise RuntimeError(f"Couldn't convert the recording: {proc.stderr[-300:]}")
+    return out
+
+
 def _analyze(project_id: int) -> None:
     """Transcribe footage locally, upload it to Gemini, and ask Argon for key moments."""
     emit = events.emitter(project_id)
     with Session(engine) as session:
         p = session.get(Project, project_id)
         try:
+            if Path(p.source_path).suffix.lower() != ".mp4":
+                emit("analyzing", {"step": "preparing the recording"})
+                p.source_path = str(_to_mp4(Path(p.source_path)))
             emit("analyzing", {"step": "transcribing"})
             p.transcript = transcribe(p.source_path)["words"]
             p.source_duration = probe_duration(p.source_path)
@@ -181,6 +213,7 @@ def get_project(pid: int, session: Session = Depends(get_session)):
         p.source_duration = probe_duration(p.source_path)  # older projects: fill in once
         session.add(p)
         session.commit()
+        session.refresh(p)  # commit expires attributes; without this model_dump() returns {}
     data = p.model_dump(exclude={"transcript", "source_path", "reference_paths"})
     data["references"] = [_reference_info(i, r) for i, r in enumerate(p.reference_paths or []) if Path(r).exists()]
     data["iterations"] = [
@@ -546,6 +579,14 @@ async def coach_ws(ws: WebSocket, cid: int):
             await ws.close()
         except Exception:
             pass
+
+
+@app.get("/api/coach/{cid}/recording")
+def get_recording(cid: int, session: Session = Depends(get_session)):
+    cs = session.get(CoachSession, cid)
+    if not cs or not cs.recording_path or not Path(cs.recording_path).exists():
+        raise HTTPException(404)
+    return FileResponse(cs.recording_path)
 
 
 @app.post("/api/coach/{cid}/recording")

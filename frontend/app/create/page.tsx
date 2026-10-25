@@ -22,6 +22,8 @@ export default function CreatePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const recorder = useRef<MediaRecorder | null>(null);
+  // Coming from a rehearsal report: use that recording as the footage, and its name as the title.
+  const [fromSession, setFromSession] = useState<{ id: number; title: string } | null>(null);
 
   useEffect(() => {
     api<{ formats: Record<string, FormatPreset>; max_seconds: number }>("/api/formats")
@@ -30,6 +32,16 @@ export default function CreatePage() {
         setMaxSeconds(r.max_seconds);
       })
       .catch((e) => setError(e.message));
+    const from = Number(new URLSearchParams(window.location.search).get("from"));
+    if (from) {
+      api<{ id: number; title: string; has_recording: boolean }>(`/api/coach/${from}`)
+        .then((s) => {
+          if (!s.has_recording) return;
+          setFromSession({ id: s.id, title: s.title });
+          setTitle((t) => t || s.title);
+        })
+        .catch(() => {});
+    }
   }, []);
 
   async function toggleVoiceNote() {
@@ -53,17 +65,18 @@ export default function CreatePage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!footage || !goal.trim()) return;
+    if ((!footage && !fromSession) || !goal.trim()) return;
     setBusy(true);
     setError("");
     const fd = new FormData();
-    fd.set("title", title || footage.name.replace(/\.[^.]+$/, ""));
+    fd.set("title", title || fromSession?.title || footage?.name.replace(/\.[^.]+$/, "") || "Untitled pitch");
     fd.set("goal", goal);
     fd.set("audience", audience);
     fd.set("style", style);
     fd.set("format", format);
     fd.set("style_notes", styleNotes);
-    fd.set("footage", footage);
+    if (footage) fd.set("footage", footage);
+    else if (fromSession) fd.set("from_session", String(fromSession.id));
     [...refs, ...(voiceNote ? [voiceNote] : [])].forEach((f) => fd.append("references", f));
     try {
       const res = await fetch(`${API}/api/projects`, { method: "POST", body: fd });
@@ -165,11 +178,28 @@ export default function CreatePage() {
         </Step>
 
         <Step n="03" title="Footage." hint="Your rehearsal recording. Shorter, compressed files upload faster.">
-          <label htmlFor="footage" className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-10 text-center transition ${footage ? "border-text bg-panel" : "border-line hover:border-muted"}`}>
-            <span className="text-sm font-medium">{footage ? footage.name : "Choose a video file"}</span>
-            <span className="mt-1 font-mono text-xs text-muted">{footage ? `${(footage.size / 1e6).toFixed(1)} MB` : "mp4 · mov · webm"}</span>
-            <input id="footage" type="file" accept="video/*" className="sr-only" onChange={(e) => setFootage(e.target.files?.[0] ?? null)} required />
-          </label>
+          {fromSession && !footage ? (
+            <div className="space-y-3 rounded-2xl border border-text bg-panel p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="eyebrow">Using your rehearsal</div>
+                  <div className="font-medium">{fromSession.title}</div>
+                </div>
+                <label htmlFor="footage" className="badge cursor-pointer hover:border-text hover:text-text">Use a different file</label>
+              </div>
+              <video src={`${API}/api/coach/${fromSession.id}/recording`} controls preload="metadata" className="max-h-64 w-full rounded-xl bg-[#0a0a0a]" />
+              <input id="footage" type="file" accept="video/*" className="sr-only" onChange={(e) => setFootage(e.target.files?.[0] ?? null)} />
+            </div>
+          ) : (
+            <label htmlFor="footage" className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-10 text-center transition ${footage ? "border-text bg-panel" : "border-line hover:border-muted"}`}>
+              <span className="text-sm font-medium">{footage ? footage.name : "Choose a video file"}</span>
+              <span className="mt-1 font-mono text-xs text-muted">{footage ? `${(footage.size / 1e6).toFixed(1)} MB` : "mp4 · mov · webm"}</span>
+              <input id="footage" type="file" accept="video/*" className="sr-only" onChange={(e) => setFootage(e.target.files?.[0] ?? null)} required={!fromSession} />
+            </label>
+          )}
+          {fromSession && footage && (
+            <button type="button" className="badge hover:border-text hover:text-text" onClick={() => setFootage(null)}>↺ Use the rehearsal recording instead</button>
+          )}
           <div>
             <label className="label" htmlFor="title">Title (optional)</label>
             <input id="title" className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Seed pitch v1" />
@@ -181,7 +211,7 @@ export default function CreatePage() {
 
       <div className="flex flex-wrap items-center justify-between gap-4">
         <p className="text-sm text-muted">Argon reads the whole video, so analysis takes about a minute.</p>
-        <button className="btn-mono-dark px-6 py-3" disabled={busy || !footage || !goal.trim()}>
+        <button className="btn-mono-dark px-6 py-3" disabled={busy || (!footage && !fromSession) || !goal.trim()}>
           {busy ? "Uploading…" : <>Find key moments <span className="arrow-ne">↗</span></>}
         </button>
       </div>
