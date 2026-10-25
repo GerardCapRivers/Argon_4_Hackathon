@@ -42,12 +42,20 @@ class Settings:
         return self.data_dir / "jobs"
 
     @property
+    def samples_dir(self) -> Path:
+        return self.data_dir / "samples"
+
+    @property
+    def cache_dir(self) -> Path:
+        return self.data_dir / "cache"
+
+    @property
     def db_url(self) -> str:
         return f"sqlite:///{(self.data_dir / 'pitchstudio.db').as_posix()}"
 
 
 settings = Settings()
-for d in (settings.data_dir, settings.uploads_dir, settings.jobs_dir):
+for d in (settings.data_dir, settings.uploads_dir, settings.jobs_dir, settings.samples_dir, settings.cache_dir):
     d.mkdir(parents=True, exist_ok=True)
 
 

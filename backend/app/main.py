@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import hashlib
 import mimetypes
 import re
 import shutil
@@ -109,6 +110,7 @@ def create_project(
     format: str = Form("short"),
     footage: UploadFile | None = File(None),
     from_session: int | None = Form(None),  # use a live-coaching rehearsal's recording as the footage
+    sample: str | None = Form(None),  # use a video from data/samples/ (demo footage)
     references: list[UploadFile] = File(default=[]),
     style_notes: str = Form(""),
     session: Session = Depends(get_session),
@@ -120,14 +122,22 @@ def create_project(
         rehearsal = session.get(CoachSession, from_session)
         if not rehearsal or not rehearsal.recording_path or not Path(rehearsal.recording_path).exists():
             raise HTTPException(400, "That rehearsal has no saved recording; attach a video file instead")
-    elif footage is None or not footage.filename:
-        raise HTTPException(400, "Attach a video file or pick a rehearsal")
+    sample_path = _sample_path(sample) if sample else None
+    if sample and not sample_path:
+        raise HTTPException(400, "Unknown sample video")
+    if rehearsal is None and sample_path is None and (footage is None or not footage.filename):
+        raise HTTPException(400, "Attach a video file, pick a rehearsal or use a sample")
     project = Project(title=title, goal=goal, audience=audience, style=style, format=format, status="analyzing")
     session.add(project)
     session.commit()
     session.refresh(project)
     folder = settings.uploads_dir / f"p{project.id}"
-    if rehearsal:
+    if sample_path:
+        folder.mkdir(parents=True, exist_ok=True)
+        dest = folder / f"{uuid.uuid4().hex[:8]}__{re.sub(r'[^A-Za-z0-9._-]+', '_', sample_path.stem)[:40]}{sample_path.suffix.lower()}"
+        shutil.copy2(sample_path, dest)
+        project.source_path = str(dest)
+    elif rehearsal:
         folder.mkdir(parents=True, exist_ok=True)
         src = Path(rehearsal.recording_path)
         dest = folder / f"{uuid.uuid4().hex[:8]}__rehearsal_{from_session}{src.suffix}"
@@ -157,6 +167,56 @@ def _to_mp4(path: Path) -> Path:
     return out
 
 
+GEMINI_FILE_TTL = 46 * 3600  # uploaded files expire after 48 h
+
+
+def _file_hash(path: Path) -> str:
+    h = hashlib.sha1()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _analysis_cache_get(key: str) -> dict | None:
+    f = settings.cache_dir / f"analysis_{key}.json"
+    if not f.exists():
+        return None
+    data = json.loads(f.read_text(encoding="utf-8"))
+    return data if time.time() - data.get("uploaded_at", 0) < GEMINI_FILE_TTL else None
+
+
+def _analysis_cache_put(key: str, words: list, duration: float | None, uri: str) -> None:
+    (settings.cache_dir / f"analysis_{key}.json").write_text(
+        json.dumps({"words": words, "duration": duration, "uri": uri, "uploaded_at": time.time()}), encoding="utf-8")
+
+
+VIDEO_EXTS = {".mp4", ".mov", ".webm", ".m4v", ".mkv"}
+
+
+def _sample_path(name: str) -> Path | None:
+    """A video in data/samples by exact file name (no paths)."""
+    p = settings.samples_dir / Path(name).name
+    return p if p.is_file() and p.suffix.lower() in VIDEO_EXTS and not p.name.endswith((".proxy480.mp4", ".preview.mp4")) else None
+
+
+@app.get("/api/samples")
+def list_samples():
+    out = []
+    for p in sorted(settings.samples_dir.glob("*")):
+        if _sample_path(p.name):
+            out.append({"name": p.name, "size": p.stat().st_size, "duration": probe_duration(p)})
+    return out
+
+
+@app.get("/api/samples/{name}")
+def get_sample(name: str):
+    p = _sample_path(name)
+    if not p:
+        raise HTTPException(404)
+    return FileResponse(p)
+
+
 def _analyze(project_id: int) -> None:
     """Transcribe footage locally, upload it to Gemini, and ask Argon for key moments."""
     emit = events.emitter(project_id)
@@ -166,17 +226,21 @@ def _analyze(project_id: int) -> None:
             if Path(p.source_path).suffix.lower() != ".mp4":
                 emit("analyzing", {"step": "preparing the recording"})
                 p.source_path = str(_to_mp4(Path(p.source_path)))
-            emit("analyzing", {"step": "transcribing"})
-            p.transcript = transcribe(p.source_path)["words"]
-            p.source_duration = probe_duration(p.source_path)
-            emit("analyzing", {"step": "uploading"})
-            p.source_file_uri = upload(Path(p.source_path)).uri
-            refs = []
-            for r in []:  # references now flow through editor.style_parts for every step
-                f = upload(Path(r))
-                refs.append({"uri": f.uri, "mime_type": f.mime_type})
+            # Same footage analysed before (e.g. a demo sample)? Reuse its transcript and upload.
+            key = _file_hash(Path(p.source_path))
+            cached = _analysis_cache_get(key)
+            if cached:
+                emit("analyzing", {"step": "reusing earlier analysis"})
+                p.transcript, p.source_duration, p.source_file_uri = cached["words"], cached["duration"], cached["uri"]
+            else:
+                emit("analyzing", {"step": "transcribing"})
+                p.transcript = transcribe(p.source_path)["words"]
+                p.source_duration = probe_duration(p.source_path)
+                emit("analyzing", {"step": "uploading"})
+                p.source_file_uri = upload(Path(p.source_path)).uri
+                _analysis_cache_put(key, p.transcript, p.source_duration, p.source_file_uri)
             emit("analyzing", {"step": "finding key moments"})
-            p.moments = editor.find_key_moments(p, refs)  # style_parts included inside
+            p.moments = editor.find_key_moments(p)  # style references are included inside
             p.selected_moments = list(range(len(p.moments)))
             p.status = "moments"
             emit("moments", {"moments": p.moments})

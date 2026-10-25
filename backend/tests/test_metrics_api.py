@@ -235,3 +235,52 @@ def test_create_project_from_rehearsal_recording(tmp_path, monkeypatch):
             p = s.get(Project, pid)
         assert p.source_path.endswith(".mp4") and probe_duration(p.source_path) > 1.5
         assert p.title == "Seed pitch rehearsal"
+
+
+def test_sample_video_and_cached_analysis(monkeypatch):
+    """Samples in data/samples can be used as footage; a second analysis reuses the cached transcript/upload."""
+    import subprocess, time
+    from fastapi.testclient import TestClient
+    from app import main
+    from app.argon import editor
+    from app.config import settings
+    from app.render.local_runner import find_ffmpeg
+
+    sample = settings.samples_dir / "demo pitch.mp4"
+    subprocess.run([find_ffmpeg(), "-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30",
+                    "-f", "lavfi", "-i", "sine=frequency=300", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-c:a", "aac", "-shortest", str(sample)], check=True)
+    calls = {"transcribe": 0, "upload": 0}
+
+    def fake_transcribe(path):
+        calls["transcribe"] += 1
+        return {"words": [{"word": "hi", "start": 0.1, "end": 0.3, "prob": 0.9}]}
+
+    def fake_upload(path):
+        calls["upload"] += 1
+        return type("F", (), {"uri": "files/demo"})()
+
+    monkeypatch.setattr(main, "transcribe", fake_transcribe)
+    monkeypatch.setattr(main, "upload", fake_upload)
+    monkeypatch.setattr(editor, "find_key_moments", lambda p: [{"start": 0, "end": 1, "label": "Hook", "why": "", "score": 9}])
+
+    def make(c):
+        r = c.post("/api/projects", data={"goal": "g", "format": "landscape", "sample": "demo pitch.mp4"})
+        assert r.status_code == 200, r.text
+        pid = r.json()["id"]
+        for _ in range(100):
+            d = c.get(f"/api/projects/{pid}").json()
+            if d["status"] != "analyzing":
+                return d
+            time.sleep(0.05)
+
+    with TestClient(main.app) as c:
+        listed = c.get("/api/samples").json()
+        assert [s["name"] for s in listed] == ["demo pitch.mp4"] and listed[0]["duration"] > 1.5
+        assert c.get("/api/samples/demo%20pitch.mp4").status_code == 200
+        assert c.get("/api/samples/..%2Fpitchstudio.db").status_code == 404
+        assert c.post("/api/projects", data={"goal": "g", "sample": "nope.mp4"}).status_code == 400
+        first, second = make(c), make(c)
+        assert first["status"] == second["status"] == "moments"
+        assert calls == {"transcribe": 1, "upload": 1}  # second run reused the cache
+        assert second["source_file_uri"] == "files/demo"

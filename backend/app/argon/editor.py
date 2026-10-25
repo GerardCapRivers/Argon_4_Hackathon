@@ -49,7 +49,6 @@ def _reference_parts(reference_uris: list[dict]) -> list[Any]:
 def find_key_moments(project, reference_uris: list[dict] | None = None) -> list[dict]:
     contents = [
         file_part(project.source_file_uri),
-        *_reference_parts(reference_uris or []),
         *style_parts(project),
         _brief(project)
         + "\n\nList 4-8 candidate moments (each 3-12s) that together could make the final video.",
