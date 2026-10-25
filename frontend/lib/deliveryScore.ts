@@ -8,10 +8,39 @@ import type { HudMetrics } from "@/components/coach/LiveHud";
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
-export const WEIGHTS = { eye: 0.3, pace: 0.2, fillers: 0.2, clarity: 0.15, tone: 0.15 } as const;
+export const WEIGHTS = { eye: 0.25, voice: 0.15, pace: 0.15, fillers: 0.15, clarity: 0.15, tone: 0.15 } as const;
 
-export function dimensionScores(m: HudMetrics): Partial<Record<keyof typeof WEIGHTS, number>> {
+/**
+ * Voice projection from the mic level, measured in the browser so it reacts instantly.
+ * `rmsAvg` is the loudness averaged over ~1 s; `speakingRef` is the presenter's own recent
+ * speaking level (see VoiceTracker), so a quiet laptop mic isn't penalised while silence or
+ * mumbling still pulls the score to 0 within ~2 s.
+ */
+const NOISE_FLOOR = 0.004;
+const MIN_REF = 0.012;
+
+export function voiceScore(rmsAvg: number, speakingRef = MIN_REF): number {
+  return clamp01((rmsAvg - NOISE_FLOOR) / (0.55 * Math.max(speakingRef, MIN_REF) - NOISE_FLOOR));
+}
+
+/** ~1 s moving average of loudness + a slowly decaying reference of the speaker's normal level. */
+export class VoiceTracker {
+  avg = 0;
+  ref = MIN_REF;
+  push(rms: number) {
+    this.avg += 0.12 * (rms - this.avg); // frames arrive every ~100 ms
+    this.ref = Math.max(MIN_REF, this.avg, this.ref * 0.995);
+  }
+  get score() {
+    return voiceScore(this.avg, this.ref);
+  }
+}
+
+export const EMPTY_METRICS: HudMetrics = { wpm: 0, fillers: 0, eye_contact: null, clarity: null, pitch_variation: 0, words: 0 };
+
+export function dimensionScores(m: HudMetrics, voice?: number | null): Partial<Record<keyof typeof WEIGHTS, number>> {
   const out: Partial<Record<keyof typeof WEIGHTS, number>> = {};
+  if (voice != null) out.voice = clamp01(voice);
   const eye = m.eye_contact_recent ?? m.eye_contact;
   if (eye != null) out.eye = clamp01(eye / 0.8); // 80%+ of the time on the lens is full marks
   const speech = (m.words ?? 0) >= 6;
@@ -25,8 +54,8 @@ export function dimensionScores(m: HudMetrics): Partial<Record<keyof typeof WEIG
   return out;
 }
 
-export function deliveryScore(m: HudMetrics): number | null {
-  const dims = dimensionScores(m);
+export function deliveryScore(m: HudMetrics, voice?: number | null): number | null {
+  const dims = dimensionScores(m, voice);
   let total = 0;
   let weight = 0;
   for (const [k, v] of Object.entries(dims)) {

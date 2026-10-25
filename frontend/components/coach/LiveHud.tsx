@@ -111,7 +111,7 @@ export function LiveHud({ m }: { m: HudMetrics | null }) {
 type Row = { label: string; value: number | null; display: string; min: number; max: number; band: [number, number]; status: Status };
 
 /** Compact one-line-per-metric list for the single-screen live view. */
-export function LiveMeterList({ m }: { m: HudMetrics | null }) {
+export function LiveMeterList({ m, voice }: { m: HudMetrics | null; voice?: number | null }) {
   const hasSpeech = (m?.words ?? 0) >= 6;
   const wpm = hasSpeech ? m!.wpm : null;
   const eye = m?.eye_contact_recent ?? m?.eye_contact ?? null;
@@ -119,6 +119,8 @@ export function LiveMeterList({ m }: { m: HudMetrics | null }) {
   const tone = hasSpeech ? m!.pitch_variation : null;
   const fillers = m ? m.fillers : null;
   const rows: Row[] = [
+    { label: "Voice", value: voice == null ? null : voice * 100, display: voice == null ? "—" : `${Math.round(voice * 100)}%`, min: 0, max: 100, band: [60, 100],
+      status: voice == null ? IDLE : voice >= 0.6 ? { word: "Projecting", tone: "good" } : voice >= 0.2 ? { word: "Speak up", tone: "warn" } : { word: "Silent", tone: "warn" } },
     { label: "Pace", value: wpm, display: wpm == null ? "—" : `${wpm.toFixed(0)} wpm`, min: 80, max: 220, band: [130, 160],
       status: wpm == null ? IDLE : wpm > 170 ? { word: "Too fast", tone: "warn" } : wpm < 110 ? { word: "Too slow", tone: "warn" } : { word: "On pace", tone: "good" } },
     { label: "Eye contact", value: eye == null ? null : eye * 100, display: eye == null ? "—" : `${Math.round(eye * 100)}%`, min: 0, max: 100, band: [60, 100],
@@ -136,7 +138,7 @@ export function LiveMeterList({ m }: { m: HudMetrics | null }) {
       {rows.map((r) => {
         const chip = r.status.tone === "good" ? "bg-good/15 text-good" : r.status.tone === "warn" ? "bg-warn/15 text-warn" : "bg-panel-2 text-muted";
         return (
-          <li key={r.label} className="py-2">
+          <li key={r.label} className="py-1.5">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs text-muted">{r.label}</span>
               <span className="flex items-center gap-2">
@@ -144,7 +146,7 @@ export function LiveMeterList({ m }: { m: HudMetrics | null }) {
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${chip}`}>{r.status.word}</span>
               </span>
             </div>
-            <div className="relative mt-1.5 h-1.5 rounded-full bg-panel-2" aria-hidden>
+            <div className="relative mt-1 h-1.5 rounded-full bg-panel-2" aria-hidden>
               <div className="absolute inset-y-0 rounded-full bg-good/25" style={{ left: pct(r, r.band[0]), width: `calc(${pct(r, r.band[1])} - ${pct(r, r.band[0])})` }} />
               {r.value != null && (
                 <div className={`absolute top-1/2 h-3 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full transition-[left] duration-500 ${r.status.tone === "warn" ? "bg-warn" : "bg-text"}`}

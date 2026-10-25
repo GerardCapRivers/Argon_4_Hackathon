@@ -11,7 +11,7 @@ import { Spinner } from "@/components/Spinner";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { API, postJSON, WS_API } from "@/lib/api";
 import { startAudio } from "@/lib/audio";
-import { deliveryScore, ScorePoint, sinceStart, smooth } from "@/lib/deliveryScore";
+import { deliveryScore, EMPTY_METRICS, ScorePoint, sinceStart, smooth, VoiceTracker } from "@/lib/deliveryScore";
 import { createLandmarker, EyeContactModel, extractSample, Sample } from "@/lib/eyeContact";
 
 type Phase = "setup" | "calibrating" | "live" | "uploading";
@@ -55,6 +55,8 @@ function CoachPage() {
   const [activeNudge, setActiveNudge] = useState<LiveNudge | null>(null);
   const [scoreHistory, setScoreHistory] = useState<ScorePoint[]>([]);
   const [level, setLevel] = useState(0);
+  const [voice, setVoice] = useState<number | null>(null); // instant voice-projection score 0..1
+  const [liveScore, setLiveScore] = useState<number | null>(null); // refreshed ~3x per second
   const scoreRef = useRef<number | null>(null);
   const nudgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [transcript, setTranscript] = useState("");
@@ -150,14 +152,27 @@ function CoachPage() {
 
     scoreRef.current = null;
     setScoreHistory([]);
+    setLiveScore(null);
+    // Server metrics arrive ~1/s (speech parts lag behind transcription); the voice level is
+    // local and instant, so the score is recomputed ~3x/s and drops as soon as you go quiet.
+    let lastMetrics: HudMetrics = EMPTY_METRICS;
+    const voiceTrack = new VoiceTracker();
+    let heardAudio = false;
+    const rescore = () => {
+      const raw = deliveryScore(lastMetrics, heardAudio ? voiceTrack.score : null);
+      if (raw == null) return null;
+      scoreRef.current = smooth(scoreRef.current, raw, 0.3);
+      setLiveScore(scoreRef.current);
+      return scoreRef.current;
+    };
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
       if (msg.type === "metrics") {
         setMetrics(msg);
-        const raw = deliveryScore(msg);
-        if (raw != null) {
-          scoreRef.current = smooth(scoreRef.current, raw);
-          const point = { t: msg.t, score: scoreRef.current };
+        lastMetrics = msg;
+        const s = rescore();
+        if (s != null) {
+          const point = { t: msg.t, score: s };
           setScoreHistory((h) => [...h, point].slice(-600));
         }
       } else if (msg.type === "transcript") setTranscript((t) => (t + " " + msg.text).slice(-400));
@@ -185,10 +200,13 @@ function CoachPage() {
       if (ws.readyState === WebSocket.OPEN) ws.send(f.pcm);
       lastRms = f.rms;
       lastPitch = f.pitch;
+      heardAudio = true;
+      voiceTrack.push(f.rms);
       const nowMs = performance.now();
       if (nowMs - lastLevelAt > 100) {
         lastLevelAt = nowMs;
         setLevel(Math.min(1, f.rms * 8)); // speech RMS is ~0.02-0.15
+        setVoice(voiceTrack.score);
       }
     });
 
@@ -206,7 +224,10 @@ function CoachPage() {
       }
     }, () => live);
 
-    const timer = setInterval(() => setElapsed(now()), 250);
+    const timer = setInterval(() => {
+      setElapsed(now());
+      if (!paused) rescore();
+    }, 300);
     setPhase("live");
 
     pauseRef.current = () => {
@@ -261,7 +282,7 @@ function CoachPage() {
   }
 
   const liveView = phase === "live" || phase === "uploading";
-  const score = scoreHistory.length ? Math.round(scoreHistory[scoreHistory.length - 1].score) : null;
+  const score = liveScore != null ? Math.round(liveScore) : scoreHistory.length ? Math.round(scoreHistory[scoreHistory.length - 1].score) : null;
   const delta = sinceStart(scoreHistory);
   const best = scoreHistory.length ? Math.round(Math.max(...scoreHistory.map((p) => p.score))) : null;
 
@@ -317,7 +338,7 @@ function CoachPage() {
 
   if (liveView) {
     // One screen, no scrolling: a presenter can't scroll mid-pitch.
-    const recent = [...nudges].reverse().slice(0, 3);
+    const recent = [...nudges].reverse().slice(0, 6); // the box shows as many as fit, newest first
     const transcriptTail = transcript.length > 140 ? "…" + transcript.slice(-140).replace(/^\S*\s/, "") : transcript;
     return (
       <div className="grid gap-4 lg:h-[calc(100dvh-9rem)] lg:grid-cols-[minmax(0,1fr)_22rem]">
@@ -344,26 +365,28 @@ function CoachPage() {
                 {best != null && <div className="mt-0.5 text-muted">Best {best}</div>}
               </div>
             </div>
-            <div className="mt-2"><ScoreTrend history={scoreHistory} height={48} /></div>
+            <div className="mt-1.5"><ScoreTrend history={scoreHistory} height={40} /></div>
           </section>
 
           <section className="rounded-2xl border border-line bg-panel px-4 py-1" aria-label="Live metrics">
-            <LiveMeterList m={metrics} />
+            <LiveMeterList m={metrics} voice={voice} />
           </section>
 
-          <section className="min-h-0 flex-1 rounded-2xl border border-line bg-panel px-4 py-3" aria-label="Recent nudges">
+          {/* Fills the remaining height; older nudges are clipped at the bottom instead of overflowing. */}
+          <section className="relative min-h-[4.5rem] flex-1 overflow-hidden rounded-2xl border border-line bg-panel px-4 py-3" aria-label="Recent nudges">
             <div className="eyebrow mb-2">Recent nudges</div>
             {recent.length === 0 ? (
               <p className="text-sm text-muted">None yet</p>
             ) : (
               <ul className="space-y-1.5">
                 {recent.map((n, i) => (
-                  <li key={n.id} className={`flex gap-2 text-sm leading-snug ${i === 0 ? "font-medium" : "text-muted"}`}>
+                  <li key={n.id} className={`flex gap-2 text-sm leading-snug ${i === 0 ? "font-medium" : "text-muted"}`} style={{ opacity: 1 - i * 0.12 }}>
                     <span className="w-8 shrink-0 font-mono text-xs tabular-nums text-muted">{n.t.toFixed(0)}s</span>{n.message}
                   </li>
                 ))}
               </ul>
             )}
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-panel to-transparent" aria-hidden />
           </section>
 
           <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
