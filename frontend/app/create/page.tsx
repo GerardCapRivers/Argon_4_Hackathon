@@ -6,18 +6,26 @@ import { useEffect, useRef, useState } from "react";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { API, api, FormatPreset } from "@/lib/api";
 
+const DEFAULTS = {
+  goal: "Get a seed investor to book a follow-up call: show the problem, our traction and the ask.",
+  audience: "Seed-stage VCs",
+  style: "Energetic, bold captions, fast cuts",
+  styleNotes: "Brand green #22C55E, clean sans-serif, calm and confident tone",
+};
+
 function CreatePage() {
   const router = useRouter();
   const [formats, setFormats] = useState<Record<string, FormatPreset>>({});
   const [maxSeconds, setMaxSeconds] = useState(30);
   const [title, setTitle] = useState("");
-  const [goal, setGoal] = useState("");
-  const [audience, setAudience] = useState("");
-  const [style, setStyle] = useState("");
-  const [format, setFormat] = useState("short");
+  // Pre-filled with a typical seed pitch so a new video can start in one click; all editable.
+  const [goal, setGoal] = useState(DEFAULTS.goal);
+  const [audience, setAudience] = useState(DEFAULTS.audience);
+  const [style, setStyle] = useState(DEFAULTS.style);
+  const [format, setFormat] = useState("landscape");
   const [footage, setFootage] = useState<File | null>(null);
   const [refs, setRefs] = useState<File[]>([]);
-  const [styleNotes, setStyleNotes] = useState("");
+  const [styleNotes, setStyleNotes] = useState(DEFAULTS.styleNotes);
   const [voiceNote, setVoiceNote] = useState<File | null>(null);
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
