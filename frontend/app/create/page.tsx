@@ -1,11 +1,12 @@
 "use client";
 
+import { ClientOnly } from "@/components/ClientOnly";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { API, api, FormatPreset } from "@/lib/api";
 
-export default function CreatePage() {
+function CreatePage() {
   const router = useRouter();
   const [formats, setFormats] = useState<Record<string, FormatPreset>>({});
   const [maxSeconds, setMaxSeconds] = useState(30);
@@ -229,5 +230,14 @@ function Step({ n, title, hint, children }: { n: string; title: string; hint: st
       </div>
       <div className="min-w-0 space-y-4">{children}</div>
     </li>
+  );
+}
+
+// Client-only: browser extensions edit form fields before hydration (see ClientOnly).
+export default function Page() {
+  return (
+    <ClientOnly>
+      <CreatePage />
+    </ClientOnly>
   );
 }

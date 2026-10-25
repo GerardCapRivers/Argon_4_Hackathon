@@ -1,5 +1,6 @@
 "use client";
 
+import { ClientOnly } from "@/components/ClientOnly";
 import { use, useCallback, useEffect, useState } from "react";
 import { DiffView } from "@/components/DiffView";
 import { CriticVerdict } from "@/components/project/CriticVerdict";
@@ -16,7 +17,7 @@ import { API, api, Critique, fmtTime, Iteration, postJSON, Project } from "@/lib
 
 const EVENT_NAMES = ["analyzing", "moments", "generating", "rendering", "rendered", "render_error", "critiquing", "critique", "done", "loop_error"];
 
-export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
+function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [project, setProject] = useState<Project | null>(null);
   const [events, setEvents] = useState<LoopEvent[]>([]);
@@ -382,5 +383,14 @@ function MomentPicker({ project, selected, setSelected, busy, onRun }: {
         })}
       </div>
     </section>
+  );
+}
+
+// Client-only: browser extensions edit form fields before hydration (see ClientOnly).
+export default function Page({ params }: { params: Promise<{ id: string }> }) {
+  return (
+    <ClientOnly>
+      <ProjectPage params={params} />
+    </ClientOnly>
   );
 }

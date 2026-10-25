@@ -1,5 +1,6 @@
 "use client";
 
+import { ClientOnly } from "@/components/ClientOnly";
 import type { FaceLandmarker } from "@mediapipe/tasks-vision";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -22,7 +23,7 @@ const CALIBRATION_STEPS = [
 ];
 const STEP_MS = 3000;
 
-export default function CoachPage() {
+function CoachPage() {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -436,5 +437,14 @@ function LevelBars({ level }: { level: number }) {
         <span key={i} className={`w-[3px] rounded-sm transition-colors ${level > th ? "bg-good" : "bg-white/25"}`} style={{ height: `${40 + i * 15}%` }} />
       ))}
     </span>
+  );
+}
+
+// Client-only: browser extensions edit form fields before hydration (see ClientOnly).
+export default function Page() {
+  return (
+    <ClientOnly>
+      <CoachPage />
+    </ClientOnly>
   );
 }
