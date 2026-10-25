@@ -1,0 +1,164 @@
+{
+  "project": {
+    "title": "Seed pitch (redesign test)",
+    "goal": "Get seed investors to book a follow-up call: hook with the problem, show traction (200 paying teams), end with the 1.5M ask and a clear call to action.",
+    "audience": "Seed-stage VCs",
+    "style": "Punchy, bold captions, no filler",
+    "format": "short",
+    "source_duration_s": 45.73
+  },
+  "1_key_moments": [
+    {
+      "start": 6.4,
+      "end": 15.6,
+      "label": "Problem Hook",
+      "why": "Clearly states the founder pain point of rehearsing without feedback and freezing in front of investors.",
+      "score": 9.5
+    },
+    {
+      "start": 16.0,
+      "end": 25.4,
+      "label": "Solution & Product",
+      "why": "Introduces PitchStudio and explains how it coaches live and auto-edits a 30-second pitch video.",
+      "score": 9.0
+    },
+    {
+      "start": 29.8,
+      "end": 34.8,
+      "label": "Traction Proof",
+      "why": "Delivers the key metric of 200 paying startup teams raising twice as fast.",
+      "score": 9.8
+    },
+    {
+      "start": 35.2,
+      "end": 42.8,
+      "label": "The Ask & CTA",
+      "why": "States the $1.5M seed round ask and ends with a direct call to action to book a demo call this week.",
+      "score": 9.5
+    }
+  ],
+  "2_editor_v1": {
+    "script": "ffmpeg -ss 6.4 -to 13.6 -copyts -i source.mp4 -vf \"crop=ih*9/16:ih,scale=1080:1920,subtitles=captions.srt:force_style='Fontsize=14,Bold=1,Outline=2,Alignment=2,MarginV=60,MarginL=40,MarginR=40,WrapStyle=0',setpts=PTS-STARTPTS,drawtext=fontfile=font.ttf:text='WHY FOUNDERS FREEZE':fontsize=64:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=20:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,3.0)',setsar=1,format=yuv420p,fps=30\" -af asetpts=PTS-STARTPTS -ar 48000 -ac 2 -c:v libx264 -preset veryfast -crf 20 -c:a aac seg1.mp4\nffmpeg -ss 15.8 -to 25.0 -copyts -i source.mp4 -vf \"crop=ih*9/16:ih,scale=1080:1920,subtitles=captions.srt:force_style='Fontsize=14,Bold=1,Outline=2,Alignment=2,MarginV=60,MarginL=40,MarginR=40,WrapStyle=0',setpts=PTS-STARTPTS,drawtext=fontfile=font.ttf:text='PITCH STUDIO':fontsize=64:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=20:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,2.5)',setsar=1,format=yuv420p,fps=30\" -af asetpts=PTS-STARTPTS -ar 48000 -ac 2 -c:v libx264 -preset veryfast -crf 20 -c:a aac seg2.mp4\nffmpeg -ss 29.0 -to 34.4 -copyts -i source.mp4 -vf \"crop=ih*9/16:ih,scale=1080:1920,subtitles=captions.srt:force_style='Fontsize=14,Bold=1,Outline=2,Alignment=2,MarginV=60,MarginL=40,MarginR=40,WrapStyle=0',setpts=PTS-STARTPTS,drawtext=fontfile=font.ttf:text='200 PAYING TEAMS':fontsize=64:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=20:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,3.0)',setsar=1,format=yuv420p,fps=30\" -af asetpts=PTS-STARTPTS -ar 48000 -ac 2 -c:v libx264 -preset veryfast -crf 20 -c:a aac seg3.mp4\nffmpeg -ss 35.0 -to 42.6 -copyts -i source.mp4 -vf \"crop=ih*9/16:ih,scale=1080:1920,subtitles=captions.srt:force_style='Fontsize=14,Bold=1,Outline=2,Alignment=2,MarginV=60,MarginL=40,MarginR=40,WrapStyle=0',setpts=PTS-STARTPTS,drawtext=fontfile=font.ttf:text='$1.5M SEED ROUND':fontsize=64:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=20:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,3.5)',drawtext=fontfile=font.ttf:text='BOOK A DEMO THIS WEEK':fontsize=64:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=20:x=(w-text_w)/2:y=h*0.12:enable='between(t,4.5,7.6)',setsar=1,format=yuv420p,fps=30\" -af asetpts=PTS-STARTPTS -ar 48000 -ac 2 -c:v libx264 -preset veryfast -crf 20 -c:a aac seg4.mp4\nffmpeg -i seg1.mp4 -i seg2.mp4 -i seg3.mp4 -i seg4.mp4 -filter_complex \"[0:v][0:a][1:v][1:a][2:v][2:a][3:v][3:a]concat=n=4:v=1:a=1[v][a]\" -map \"[v]\" -map \"[a]\" -c:v libx264 -preset veryfast -crf 20 -c:a aac -r 30 -movflags +faststart -t 30 output.mp4",
+    "changes": [
+      "Removed opening filler and mid-pitch stumble for a clean 29s runtime",
+      "Opened immediately on the founder pain point hook",
+      "Cropped to 9:16 vertical format centering the presenter",
+      "Added burned-in captions and bold top banners for traction and $1.5M ask"
+    ],
+    "rationale": [
+      "Cut opening hesitation and jump straight to the problem hook at 6.4s.",
+      "Trim redundant phrase at 13.6s to keep pacing tight under 30 seconds.",
+      "Include product explanation from 15.8s to 25.0s, cutting the stumble after.",
+      "Start traction segment at 29.0s to capture 'Since launch, 200 startup teams'.",
+      "Close with the $1.5M seed ask and call to action from 35.0s to 42.6s.",
+      "Center-crop 16:9 to 9:16 and burn bold captions with top headline overlays."
+    ]
+  },
+  "3_critic_v1": {
+    "score": 6.5,
+    "verdict": "Not publishable: outtake caption and truncated ending",
+    "ready": false,
+    "summary": "The pitch hits all key brief points with good pacing, but caption errors, a pronunciation glitch, and a clipped ending prevent publishing.",
+    "strengths": [
+      "Strong problem hook in first 2s",
+      "Clear traction and fundraising ask",
+      "Helpful top topic banners",
+      "Fits comfortably under 30s limit"
+    ],
+    "blockers": [
+      "Ending cuts off mid-sentence at 0:28",
+      "Outtake text 'go back' left in captions",
+      "TTS mispronounces 'live' as 'liv' at 0:09"
+    ],
+    "issues": [
+      {
+        "at": "0:28",
+        "problem": "Audio and captions cut off after 'with us this'",
+        "fix": "Extend clip by 1 second so 'this week' finishes.",
+        "severity": "high"
+      },
+      {
+        "at": "0:16",
+        "problem": "Caption displays 'go back.' instead of 'automatically.'",
+        "fix": "Replace stray outtake text with 'automatically.' in captions.",
+        "severity": "high"
+      },
+      {
+        "at": "0:09",
+        "problem": "Voiceover mispronounces 'live' (rhymes with give)",
+        "fix": "Regenerate voiceover so 'live' rhymes with 'hive'.",
+        "severity": "medium"
+      },
+      {
+        "at": "0:04",
+        "problem": "Word 'feedback' is spoken but missing from captions",
+        "fix": "Add 'feedback.' to the caption block at 0:04.",
+        "severity": "medium"
+      },
+      {
+        "at": "0:07",
+        "problem": "Caption says 'We build pitch studio' instead of 'built'",
+        "fix": "Change caption text to 'We built Pitch Studio.'",
+        "severity": "low"
+      }
+    ]
+  },
+  "4_editor_v2_after_critique": {
+    "script": "ffmpeg -ss 6.4 -to 13.4 -copyts -i source.mp4 -vf \"crop=ih*9/16:ih,scale=1080:1920,setpts=PTS-STARTPTS,drawtext=fontfile=font.ttf:text='WHY FOUNDERS FREEZE':fontsize=64:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=20:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,3.0)',drawtext=fontfile=font.ttf:text='Every year, founders spend hundreds of hours':fontsize=42:fontcolor=white:box=1:boxcolor=black@0.7:boxborderw=16:x=(w-text_w)/2:y=h*0.84:enable='between(t,0,2.4)',drawtext=fontfile=font.ttf:text='rehearsing pitches with no real feedback.':fontsize=42:fontcolor=white:box=1:boxcolor=black@0.7:boxborderw=16:x=(w-text_w)/2:y=h*0.84:enable='between(t,2.4,4.6)',drawtext=fontfile=font.ttf:text='Most of them freeze in front of investors.':fontsize=42:fontcolor=white:box=1:boxcolor=black@0.7:boxborderw=16:x=(w-text_w)/2:y=h*0.84:enable='between(t,5.1,7.0)',setsar=1,format=yuv420p,fps=30\" -af asetpts=PTS-STARTPTS -ar 48000 -ac 2 -c:v libx264 -preset veryfast -crf 20 -c:a aac seg1.mp4\nffmpeg -ss 15.85 -to 24.8 -copyts -i source.mp4 -vf \"crop=ih*9/16:ih,scale=1080:1920,setpts=PTS-STARTPTS,drawtext=fontfile=font.ttf:text='PITCH STUDIO':fontsize=64:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=20:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,2.5)',drawtext=fontfile=font.ttf:text='We built Pitch Studio.':fontsize=42:fontcolor=white:box=1:boxcolor=black@0.7:boxborderw=16:x=(w-text_w)/2:y=h*0.84:enable='between(t,0,1.6)',drawtext=fontfile=font.ttf:text='It coaches you live on your own laptop,':fontsize=42:fontcolor=white:box=1:boxcolor=black@0.7:boxborderw=16:x=(w-text_w)/2:y=h*0.84:enable='between(t,1.8,4.9)',drawtext=fontfile=font.ttf:text='and edits a polished 30s pitch video automatically.':fontsize=40:fontcolor=white:box=1:boxcolor=black@0.7:boxborderw=16:x=(w-text_w)/2:y=h*0.84:enable='between(t,5.1,8.95)',setsar=1,format=yuv420p,fps=30\" -af asetpts=PTS-STARTPTS -ar 48000 -ac 2 -c:v libx264 -preset veryfast -crf 20 -c:a aac seg2.mp4\nffmpeg -ss 29.1 -to 34.3 -copyts -i source.mp4 -vf \"crop=ih*9/16:ih,scale=1080:1920,setpts=PTS-STARTPTS,drawtext=fontfile=font.ttf:text='200 PAYING TEAMS':fontsize=64:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=20:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,3.0)',drawtext=fontfile=font.ttf:text='Since launch, 200 startup teams pay us monthly,':fontsize=42:fontcolor=white:box=1:boxcolor=black@0.7:boxborderw=16:x=(w-text_w)/2:y=h*0.84:enable='between(t,0,3.3)',drawtext=fontfile=font.ttf:text='and they raise twice as fast.':fontsize=42:fontcolor=white:box=1:boxcolor=black@0.7:boxborderw=16:x=(w-text_w)/2:y=h*0.84:enable='between(t,3.7,5.2)',setsar=1,format=yuv420p,fps=30\" -af asetpts=PTS-STARTPTS -ar 48000 -ac 2 -c:v libx264 -preset veryfast -crf 20 -c:a aac seg3.mp4\nffmpeg -ss 35.05 -to 42.9 -copyts -i source.mp4 -vf \"crop=ih*9/16:ih,scale=1080:1920,setpts=PTS-STARTPTS,drawtext=fontfile=font.ttf:text='$1.5M SEED ROUND':fontsize=64:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=20:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,3.8)',drawtext=fontfile=font.ttf:text='BOOK A DEMO THIS WEEK':fontsize=64:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=20:x=(w-text_w)/2:y=h*0.12:enable='between(t,4.5,7.85)',drawtext=fontfile=font.ttf:text='Raising a $1.5M seed round to grow our sales team.':fontsize=40:fontcolor=white:box=1:boxcolor=black@0.7:boxborderw=16:x=(w-text_w)/2:y=h*0.84:enable='between(t,0,3.8)',drawtext=fontfile=font.ttf:text='Want to see a demo? Book a call with us this week.':fontsize=40:fontcolor=white:box=1:boxcolor=black@0.7:boxborderw=16:x=(w-text_w)/2:y=h*0.84:enable='between(t,4.5,7.85)',setsar=1,format=yuv420p,fps=30\" -af asetpts=PTS-STARTPTS -ar 48000 -ac 2 -c:v libx264 -preset veryfast -crf 20 -c:a aac seg4.mp4\nffmpeg -i seg1.mp4 -i seg2.mp4 -i seg3.mp4 -i seg4.mp4 -filter_complex \"[0:v][0:a][1:v][1:a][2:v][2:a][3:v][3:a]concat=n=4:v=1:a=1[v][a]\" -map \"[v]\" -map \"[a]\" -c:v libx264 -preset veryfast -crf 20 -c:a aac -r 30 -movflags +faststart -t 30 output.mp4",
+    "change_summary": "Fixed caption errors and extended final cut so 'this week' finishes cleanly.",
+    "changes": [
+      "Extended ending so 'book a call with us this week' finishes completely",
+      "Removed stray 'go back' outtake text and restored 'automatically.'",
+      "Added missing 'feedback.' and corrected 'We built Pitch Studio.' in captions",
+      "Tightened segment pauses to fit the full pitch inside 29 seconds"
+    ],
+    "rationale": [
+      "Replaced faulty SRT subtitles with accurate drawtext captions throughout.",
+      "Trimmed pauses slightly so total runtime is 29.0s without clipping the end.",
+      "Extended final segment to 42.9s so 'this week' completes cleanly.",
+      "Fixed captions for 'feedback.', 'We built Pitch Studio.', and 'automatically.'"
+    ]
+  },
+  "5_critic_v2": {
+    "score": 7,
+    "verdict": "Strong structure, but tight cuts clip words",
+    "ready": false,
+    "summary": "The pitch hits every goal in 29 seconds with zero filler, but aggressive cuts clip the ends of words at two transitions.",
+    "strengths": [
+      "Clear problem-solution-traction-ask arc",
+      "All filler removed cleanly",
+      "9:16 framing and readable captions",
+      "Under 30s length target"
+    ],
+    "blockers": [
+      "Clipped word endings at 0:06 and 0:15",
+      "Bottom captions are small rather than bold"
+    ],
+    "issues": [
+      {
+        "at": "0:15",
+        "problem": "Cut clips the final syllable of 'automatically'.",
+        "fix": "Extend outgoing clip by 150-200ms before cutting to traction.",
+        "severity": "high"
+      },
+      {
+        "at": "0:06",
+        "problem": "Word 'investors' is slightly clipped before the next cut.",
+        "fix": "Add 100ms tail padding to the first clip.",
+        "severity": "medium"
+      },
+      {
+        "at": "0:09",
+        "problem": "Caption paraphrases spoken audio, dropping 'while you rehearse'.",
+        "fix": "Match captions verbatim to spoken words for smoother reading.",
+        "severity": "low"
+      },
+      {
+        "at": "overall",
+        "problem": "Bottom subtitle bar is small for a 'bold captions' brief.",
+        "fix": "Increase subtitle font size and weight for mobile viewing.",
+        "severity": "low"
+      }
+    ]
+  }
+}

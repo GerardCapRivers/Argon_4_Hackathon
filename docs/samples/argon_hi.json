@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-10-25T21:28:41+00:00",
+  "request": {
+    "model": "gemini-4-argon",
+    "contents": "hi"
+  },
+  "response": {
+    "text": "Hello! How can I help you today?",
+    "latency_seconds": 3.13
+  },
+  "usage": {
+    "input_tokens": 32,
+    "output_tokens": 13,
+    "total_tokens": 45
+  }
+}

@@ -41,8 +41,12 @@ export type PretrainedNet = {
   scale: number[];
   W1: number[][]; // [nFeatures][hidden]
   b1: number[];
-  W2: number[]; // [hidden]
-  b2: number;
+  /** v1 classifier: W2 [hidden], b2 number. v2 gaze model: W2 [hidden][2], b2 [2] -> (horizontal, vertical) degrees. */
+  W2: number[] | number[][];
+  b2: number | number[];
+  output?: "gaze";
+  sigma?: [number, number];
+  calib?: [number, number];
   threshold: number;
   metrics_subject_holdout?: { mlp?: { auc: number; f1: number; accuracy: number } };
   test_vectors?: { x: number[]; p: number }[];
@@ -51,14 +55,37 @@ export type PretrainedNet = {
 
 const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
 
-/** standardize → tanh hidden layer → sigmoid, identical to sklearn's MLPClassifier. */
-export function forward(net: PretrainedNet, x: Features): number {
-  const h = net.b1.map((b, j) => {
+function hidden(net: PretrainedNet, x: Features): number[] {
+  return net.b1.map((b, j) => {
     let s = b;
     for (let i = 0; i < x.length; i++) s += ((x[i] - net.mean[i]) / net.scale[i]) * net.W1[i][j];
     return Math.tanh(s);
   });
-  return sigmoid(h.reduce((s, v, j) => s + v * net.W2[j], net.b2));
+}
+
+/** Predicted (horizontal, vertical) gaze angle in degrees relative to the camera (v2 gaze models). */
+export function gazeAngles(net: PretrainedNet, x: Features): [number, number] {
+  const h = hidden(net, x);
+  const W2 = net.W2 as number[][];
+  const b2 = net.b2 as number[];
+  return [0, 1].map((k) => h.reduce((s, v, j) => s + v * W2[j][k], b2[k])) as [number, number];
+}
+
+/**
+ * Eye-contact probability, identical to the Python export:
+ * v1: standardize → tanh layer → sigmoid (MLPClassifier).
+ * v2: predict gaze angles → distance from the lens in σ units → calibrated sigmoid.
+ */
+export function forward(net: PretrainedNet, x: Features): number {
+  if (net.output === "gaze") {
+    const [gh, gv] = gazeAngles(net, x);
+    const [sh, sv] = net.sigma ?? [7.5, 5];
+    const lens = -Math.sqrt((gh / sh) ** 2 + (gv / sv) ** 2);
+    const [a, b] = net.calib ?? [1, 0];
+    return sigmoid(a * lens + b);
+  }
+  const h = hidden(net, x);
+  return sigmoid(h.reduce((s, v, j) => s + v * (net.W2 as number[])[j], net.b2 as number));
 }
 
 const logit = (p: number) => Math.log(Math.max(p, 1e-6) / Math.max(1 - p, 1e-6));

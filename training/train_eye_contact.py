@@ -17,7 +17,7 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
 from sklearn.model_selection import GroupKFold
-from sklearn.neural_network import MLPClassifier
+from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.preprocessing import StandardScaler
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -38,7 +38,8 @@ def load():
     y = np.array([int(int(r["V"]) == 0 and abs(int(r["H"])) <= 5) for r in rows])
     groups = np.array([r["subject"] for r in rows])
     head_angle = np.array([float(r["head_angle"]) for r in rows])
-    return X, y, groups, head_angle
+    angles = np.array([[float(r["H"]), float(r["V"])] for r in rows])
+    return X, y, groups, head_angle, angles
 
 
 def heuristic(X: np.ndarray, head_angle: np.ndarray) -> np.ndarray:
@@ -79,49 +80,78 @@ def report(name, y, p, thr):
     return m
 
 
+SIGMA_H, SIGMA_V = 7.5, 5.0  # degrees: how far off-lens still reads as eye contact (matches the label rule)
+
+
+def make_gaze_mlp():
+    """Predicts (horizontal, vertical) gaze angle in degrees, relative to the camera."""
+    return MLPRegressor(hidden_layer_sizes=(HIDDEN,), activation="tanh", alpha=1e-2,
+                        max_iter=4000, random_state=SEED)
+
+
+def lens_score(pred: np.ndarray) -> np.ndarray:
+    """Higher = closer to looking straight into the lens."""
+    return -np.sqrt((pred[:, 0] / SIGMA_H) ** 2 + (pred[:, 1] / SIGMA_V) ** 2)
+
+
 def main() -> None:
     if not FEATURES_CSV.exists():
         sys.exit("Run training/extract_features.py first.")
-    X, y, groups, head_angle = load()
+    X, y, groups, head_angle, angles = load()
     print(f"{len(y)} samples, {y.sum()} positives, {len(set(groups))} subjects")
     rng = np.random.default_rng(SEED)
 
-    oof = {"mlp": np.zeros(len(y)), "logreg": np.zeros(len(y))}
+    oof = {k: np.zeros(len(y)) for k in ("clf", "logreg", "gaze")}
+    oof_angles = np.zeros((len(y), 2))
     for tr, te in GroupKFold(n_splits=5).split(X, y, groups):
         scaler = StandardScaler().fit(X[tr])
-        Xtr, ytr = balanced(scaler.transform(X[tr]), y[tr], rng)
-        oof["mlp"][te] = make_mlp().fit(Xtr, ytr).predict_proba(scaler.transform(X[te]))[:, 1]
-        lr = LogisticRegression(class_weight="balanced", max_iter=2000).fit(scaler.transform(X[tr]), y[tr])
-        oof["logreg"][te] = lr.predict_proba(scaler.transform(X[te]))[:, 1]
+        Xtr, Xte = scaler.transform(X[tr]), scaler.transform(X[te])
+        Xb, yb = balanced(Xtr, y[tr], rng)
+        oof["clf"][te] = make_mlp().fit(Xb, yb).predict_proba(Xte)[:, 1]
+        oof["logreg"][te] = LogisticRegression(class_weight="balanced", max_iter=2000).fit(Xtr, y[tr]).predict_proba(Xte)[:, 1]
+        oof_angles[te] = make_gaze_mlp().fit(Xtr, angles[tr]).predict(Xte)
+    s = lens_score(oof_angles)
+    # Map the lens score to a probability (1-D logistic fit on held-out predictions).
+    calib = LogisticRegression(class_weight="balanced").fit(s[:, None], y)
+    calib_a, calib_b = float(calib.coef_[0, 0]), float(calib.intercept_[0])
+    oof["gaze"] = 1 / (1 + np.exp(-(calib_a * s + calib_b)))
 
+    mae = np.abs(oof_angles - angles).mean(axis=0)
+    print(f"\nGaze angle error on unseen people: horizontal {mae[0]:.1f} deg, vertical {mae[1]:.1f} deg")
     print("\nSubject-held-out (5-fold GroupKFold) results:")
     metrics = {
         "heuristic_baseline": report("old heuristic", y, heuristic(X, head_angle), 0.5),
         "logreg": report("logistic regression", y, oof["logreg"], best_threshold(y, oof["logreg"])),
+        "classifier_mlp": report("yes/no MLP", y, oof["clf"], best_threshold(y, oof["clf"])),
     }
-    thr = best_threshold(y, oof["mlp"])
-    metrics["mlp"] = report("MLP (exported)", y, oof["mlp"], thr)
+    thr = best_threshold(y, oof["gaze"])
+    metrics["mlp"] = report("gaze-angle MLP (exported)", y, oof["gaze"], thr)
+    metrics["gaze_mae_deg"] = {"horizontal": round(float(mae[0]), 2), "vertical": round(float(mae[1]), 2)}
 
     # Final model on all subjects.
     scaler = StandardScaler().fit(X)
-    Xb, yb = balanced(scaler.transform(X), y, rng)
-    mlp = make_mlp().fit(Xb, yb)
+    gaze = make_gaze_mlp().fit(scaler.transform(X), angles)
+
+    def prob(rows: np.ndarray) -> np.ndarray:
+        return 1 / (1 + np.exp(-(calib_a * lens_score(gaze.predict(scaler.transform(rows))) + calib_b)))
 
     test_idx = rng.choice(len(y), size=10, replace=False)
-    test_vectors = [{"x": X[i].tolist(), "p": float(mlp.predict_proba(scaler.transform(X[i:i + 1]))[0, 1])}
-                    for i in test_idx]
+    test_vectors = [{"x": X[i].tolist(), "p": float(prob(X[i:i + 1])[0])} for i in test_idx]
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps({
-        "version": 1,
+        "version": 2,
+        "output": "gaze",
         "features": FEATURE_NAMES,
         "mean": scaler.mean_.tolist(),
         "scale": scaler.scale_.tolist(),
-        "W1": mlp.coefs_[0].tolist(),            # [n_features][HIDDEN]
-        "b1": mlp.intercepts_[0].tolist(),
-        "W2": mlp.coefs_[1][:, 0].tolist(),      # [HIDDEN]
-        "b2": float(mlp.intercepts_[1][0]),
+        "W1": gaze.coefs_[0].tolist(),            # [n_features][HIDDEN]
+        "b1": gaze.intercepts_[0].tolist(),
+        "W2": gaze.coefs_[1].tolist(),            # [HIDDEN][2] -> (horizontal, vertical) degrees
+        "b2": gaze.intercepts_[1].tolist(),
         "activation": "tanh",
+        "sigma": [SIGMA_H, SIGMA_V],
+        "calib": [calib_a, calib_b],
         "threshold": thr,
         "label_rule": "vertical gaze 0 deg and |horizontal gaze| <= 5 deg",
         "metrics_subject_holdout": metrics,

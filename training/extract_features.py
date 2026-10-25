@@ -85,6 +85,15 @@ def main() -> None:
     paths = sorted(str(p) for p in DATA.rglob("*") if NAME.match(p.name))
     if not paths:
         sys.exit(f"No Columbia Gaze images under {DATA}. Run training/download.py first.")
+    # Only subjects with all 105 photos (5 head poses x 21 gaze directions); partial downloads skew labels.
+    counts: dict[str, int] = {}
+    for p in paths:
+        sid = NAME.match(Path(p).name).group(1)
+        counts[sid] = counts.get(sid, 0) + 1
+    partial = sorted(s for s, n in counts.items() if n < 105)
+    if partial:
+        print(f"Skipping {len(partial)} incomplete subjects: {partial}")
+        paths = [p for p in paths if NAME.match(Path(p).name).group(1) not in partial]
     if args.subjects:
         keep = sorted({NAME.match(Path(p).name).group(1) for p in paths})[: args.subjects]
         paths = [p for p in paths if NAME.match(Path(p).name).group(1) in keep]
